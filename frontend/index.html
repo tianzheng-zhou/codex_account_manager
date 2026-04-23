@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Codex 账号管理</title>
+  <link rel="stylesheet" href="/design-system/colors_and_type.css">
+  <link rel="stylesheet" href="/static/app.css">
+  <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+</head>
+<body data-ds>
+
+  <!-- Header -->
+  <header class="app-header">
+    <div class="header-inner">
+      <div class="brand">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="32" height="32">
+          <circle cx="32" cy="32" r="30" fill="#C96442"/>
+          <text x="32" y="44" text-anchor="middle" font-family="Literata, Georgia, serif" font-size="38" font-weight="400" fill="#FAFAF7" letter-spacing="-0.02em">C</text>
+        </svg>
+        <h1 class="brand-title">Codex 账号管理</h1>
+      </div>
+    </div>
+  </header>
+
+  <main class="app-main">
+    <!-- Stats -->
+    <section class="stats-row" id="statsRow"></section>
+
+    <!-- Redeem Section -->
+    <section class="redeem-section">
+      <div class="redeem-card">
+        <h2 class="ds-h3">一键兑换</h2>
+        <p class="ds-small">输入兑换密钥，自动获取账号信息并录入系统</p>
+        <div class="redeem-form">
+          <input type="text" id="redeemKeyInput" class="input" placeholder="TEAM-XXXXXXXX 或 PLUS-XXXXXXXX">
+          <button class="btn btn-primary" id="redeemBtn" onclick="handleRedeem()">
+            <i data-lucide="key-round"></i>
+            兑换
+          </button>
+        </div>
+        <div id="redeemMsg" class="redeem-msg" style="display:none;"></div>
+      </div>
+    </section>
+
+    <!-- Toolbar -->
+    <section class="toolbar">
+      <div class="toolbar-left">
+        <div class="search-box">
+          <i data-lucide="search"></i>
+          <input type="text" id="searchInput" class="input input-search" placeholder="搜索邮箱、密钥、备注…" oninput="debounceLoad()">
+        </div>
+        <select id="typeFilter" class="input input-select" onchange="loadAccounts()">
+          <option value="">全部类型</option>
+          <option value="Team">Team</option>
+          <option value="Plus">Plus</option>
+        </select>
+        <select id="statusFilter" class="input input-select" onchange="loadAccounts()">
+          <option value="">全部状态</option>
+          <option value="available">可用</option>
+          <option value="assigned">已分配</option>
+          <option value="expired">已过期</option>
+        </select>
+      </div>
+      <button class="btn btn-outline" onclick="openAddModal()">
+        <i data-lucide="plus"></i>
+        手动添加
+      </button>
+    </section>
+
+    <!-- Account List -->
+    <section class="account-list" id="accountList">
+      <div class="empty-state" id="emptyState">
+        <i data-lucide="inbox" class="empty-icon"></i>
+        <p>暂无账号。输入密钥兑换或手动添加。</p>
+      </div>
+    </section>
+  </main>
+
+  <!-- Add/Edit Modal -->
+  <div class="modal-overlay" id="modalOverlay" style="display:none;" onclick="closeModal(event)">
+    <div class="modal" onclick="event.stopPropagation()">
+      <div class="modal-header">
+        <h3 class="ds-h3" id="modalTitle">添加账号</h3>
+        <button class="btn-icon" onclick="closeModal()"><i data-lucide="x"></i></button>
+      </div>
+      <form id="accountForm" onsubmit="handleFormSubmit(event)">
+        <input type="hidden" id="editId" value="">
+        <label class="form-label">兑换密钥
+          <input type="text" id="fRedeemKey" class="input" placeholder="TEAM-XXXXXXXX" required>
+        </label>
+        <label class="form-label">账号类型
+          <select id="fAccountType" class="input input-select">
+            <option value="Team">Team</option>
+            <option value="Plus">Plus</option>
+          </select>
+        </label>
+        <label class="form-label">邮箱
+          <input type="text" id="fEmail" class="input" placeholder="user@example.com" required>
+        </label>
+        <label class="form-label">密码
+          <input type="text" id="fPassword" class="input" placeholder="密码" required>
+        </label>
+        <label class="form-label">收码链接
+          <input type="text" id="fCodeUrl" class="input" placeholder="https://...">
+        </label>
+        <label class="form-label">状态
+          <select id="fStatus" class="input input-select">
+            <option value="available">可用</option>
+            <option value="assigned">已分配</option>
+            <option value="expired">已过期</option>
+          </select>
+        </label>
+        <label class="form-label">备注
+          <input type="text" id="fRemark" class="input" placeholder="可选备注">
+        </label>
+        <div class="modal-actions">
+          <button type="button" class="btn btn-outline" onclick="closeModal()">取消</button>
+          <button type="submit" class="btn btn-primary" id="formSubmitBtn">保存</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Delete Confirm Modal -->
+  <div class="modal-overlay" id="deleteOverlay" style="display:none;" onclick="closeDeleteModal(event)">
+    <div class="modal modal-sm" onclick="event.stopPropagation()">
+      <div class="modal-header">
+        <h3 class="ds-h3">确认删除</h3>
+        <button class="btn-icon" onclick="closeDeleteModal()"><i data-lucide="x"></i></button>
+      </div>
+      <p class="ds-p" style="margin:0 0 var(--space-6);">删除后无法恢复，确定要删除这个账号吗？</p>
+      <div class="modal-actions">
+        <button class="btn btn-outline" onclick="closeDeleteModal()">取消</button>
+        <button class="btn btn-danger" id="confirmDeleteBtn">删除</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Code Display Modal -->
+  <div class="modal-overlay" id="codeOverlay" style="display:none;" onclick="closeCodeModal(event)">
+    <div class="modal modal-sm" onclick="event.stopPropagation()">
+      <div class="modal-header">
+        <h3 class="ds-h3">验证码</h3>
+        <button class="btn-icon" onclick="closeCodeModal()"><i data-lucide="x"></i></button>
+      </div>
+      <div id="codeContent"></div>
+    </div>
+  </div>
+
+  <!-- Toast -->
+  <div class="toast-container" id="toastContainer"></div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
