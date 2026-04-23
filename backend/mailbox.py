@@ -3,21 +3,24 @@ import httpx
 from typing import Optional
 from urllib.parse import urlparse
 
+from config import PROXY_URL
 
-def _get_base_url(code_url: str) -> str:
+
+def _get_mailbox_base(code_url: str) -> str:
     parsed = urlparse(code_url)
-    return f"{parsed.scheme}://{parsed.netloc}"
+    path = parsed.path.rstrip("/")
+    return f"{parsed.scheme}://{parsed.netloc}{path}"
 
 
 async def fetch_verification_code(
     email: str, password: str, code_url: str
 ) -> dict:
-    base_url = _get_base_url(code_url)
-    login_url = f"{base_url}/auth/login"
-    messages_url = f"{base_url}/messages?limit=10"
+    base = _get_mailbox_base(code_url)
+    login_url = f"{base}/auth/login"
+    messages_url = f"{base}/api/messages?limit=10"
 
     try:
-        async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
+        async with httpx.AsyncClient(timeout=30, follow_redirects=True, proxy=PROXY_URL) as client:
             login_resp = await client.post(
                 login_url,
                 json={"address": email, "password": password},

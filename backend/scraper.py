@@ -2,6 +2,8 @@ import httpx
 from bs4 import BeautifulSoup
 from typing import Optional
 
+from config import PROXY_URL
+
 
 REDEEM_URL = "https://chongzhi.art/claim/redeem"
 LOOKUP_URL = "https://chongzhi.art/claim/lookup"
@@ -50,7 +52,7 @@ def _parse_account_html(html: str) -> Optional[dict]:
 
 
 async def redeem_key(key: str) -> dict:
-    async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
+    async with httpx.AsyncClient(timeout=30, follow_redirects=True, proxy=PROXY_URL) as client:
         resp = await client.post(REDEEM_URL, data={"code": key})
         result = _parse_account_html(resp.text)
 
