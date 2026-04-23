@@ -10,7 +10,63 @@
 </head>
 <body data-ds>
 
-  <div class="app-layout">
+  <!-- ===== Login / Register Screen ===== -->
+  <div class="auth-screen" id="authScreen">
+    <div class="auth-card">
+      <div class="auth-brand">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="48" height="48">
+          <circle cx="32" cy="32" r="30" fill="#C96442"/>
+          <text x="32" y="44" text-anchor="middle" font-family="Literata, Georgia, serif" font-size="38" font-weight="400" fill="#FAFAF7" letter-spacing="-0.02em">C</text>
+        </svg>
+        <h1 class="ds-h2" style="margin:0;">Codex 账号管理</h1>
+      </div>
+
+      <!-- Login Tab -->
+      <div id="authLogin">
+        <div class="auth-tabs">
+          <button class="auth-tab active" onclick="showAuthTab('login')">登录</button>
+          <button class="auth-tab" onclick="showAuthTab('register')">注册</button>
+        </div>
+        <form onsubmit="handleLogin(event)">
+          <label class="form-label">用户名
+            <input type="text" id="loginUsername" class="input" placeholder="用户名" required autocomplete="username">
+          </label>
+          <label class="form-label">密码
+            <input type="password" id="loginPassword" class="input" placeholder="密码" required autocomplete="current-password">
+          </label>
+          <div id="loginMsg" class="auth-msg" style="display:none;"></div>
+          <button type="submit" class="btn btn-primary btn-block" id="loginBtn">登录</button>
+        </form>
+      </div>
+
+      <!-- Register Tab -->
+      <div id="authRegister" style="display:none;">
+        <div class="auth-tabs">
+          <button class="auth-tab" onclick="showAuthTab('login')">登录</button>
+          <button class="auth-tab active" onclick="showAuthTab('register')">注册</button>
+        </div>
+        <form onsubmit="handleRegister(event)">
+          <label class="form-label">用户名
+            <input type="text" id="regUsername" class="input" placeholder="至少 2 个字符" required>
+          </label>
+          <label class="form-label">密码
+            <input type="password" id="regPassword" class="input" placeholder="至少 4 个字符" required>
+          </label>
+          <label class="form-label">确认密码
+            <input type="password" id="regPassword2" class="input" placeholder="再次输入密码" required>
+          </label>
+          <label class="form-label">邀请码 <span class="ds-meta">（可选，有邀请码免审核）</span>
+            <input type="text" id="regInviteCode" class="input" placeholder="留空则需管理员审核">
+          </label>
+          <div id="regMsg" class="auth-msg" style="display:none;"></div>
+          <button type="submit" class="btn btn-primary btn-block" id="regBtn">注册</button>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== Main App (hidden until logged in) ===== -->
+  <div class="app-layout" id="appLayout" style="display:none;">
     <!-- Sidebar -->
     <aside class="sidebar" id="sidebar">
       <div class="sidebar-top">
@@ -32,9 +88,30 @@
             <i data-lucide="store"></i>
             <span class="nav-label">GPT专卖-cw</span>
           </button>
+          <!-- Admin-only nav items -->
+          <div id="adminNav" style="display:none;">
+            <div class="nav-divider"></div>
+            <div class="nav-section-title"><span>管理</span></div>
+            <button class="nav-item" data-view="users" onclick="switchView('users')">
+              <i data-lucide="users"></i>
+              <span class="nav-label">用户管理</span>
+            </button>
+            <button class="nav-item" data-view="invites" onclick="switchView('invites')">
+              <i data-lucide="ticket"></i>
+              <span class="nav-label">邀请码</span>
+            </button>
+          </div>
         </nav>
       </div>
       <div class="sidebar-bottom">
+        <div class="sidebar-user" id="sidebarUser">
+          <i data-lucide="circle-user"></i>
+          <span class="nav-label" id="sidebarUsername">—</span>
+        </div>
+        <button class="nav-item" onclick="handleLogout()">
+          <i data-lucide="log-out"></i>
+          <span class="nav-label">退出</span>
+        </button>
         <button class="nav-item sidebar-toggle" onclick="toggleSidebar()">
           <i data-lucide="panel-left-close" id="toggleIcon"></i>
           <span class="nav-label">收起</span>
@@ -114,6 +191,32 @@
             <p>暂无账号。输入密钥兑换或手动添加。</p>
           </div>
         </section>
+      </div>
+
+      <!-- Users View (admin only) -->
+      <div class="view" id="viewUsers" style="display:none;">
+        <div class="view-header">
+          <h1 class="view-title">用户管理</h1>
+          <p class="view-subtitle">查看注册用户、审核、删除</p>
+        </div>
+        <section class="user-list" id="userList"></section>
+      </div>
+
+      <!-- Invite Codes View (admin only) -->
+      <div class="view" id="viewInvites" style="display:none;">
+        <div class="view-header">
+          <div class="view-header-row">
+            <div>
+              <h1 class="view-title">邀请码管理</h1>
+              <p class="view-subtitle">生成邀请码分享给他人注册</p>
+            </div>
+            <button class="btn btn-primary" onclick="generateInviteCode()">
+              <i data-lucide="plus"></i>
+              生成邀请码
+            </button>
+          </div>
+        </div>
+        <section class="invite-list" id="inviteList"></section>
       </div>
     </main>
   </div>

@@ -1,6 +1,28 @@
-from sqlalchemy import Column, Integer, String, DateTime, func
+from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey, func
 
 from database import Base
+
+
+class User(Base):
+    __tablename__ = "users"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    username = Column(String, unique=True, index=True, nullable=False)
+    password_hash = Column(String, nullable=False)
+    role = Column(String, nullable=False, default="user")  # "admin" or "user"
+    is_approved = Column(Boolean, nullable=False, default=False)
+    created_at = Column(DateTime, server_default=func.now())
+
+
+class InviteCode(Base):
+    __tablename__ = "invite_codes"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    code = Column(String, unique=True, index=True, nullable=False)
+    created_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    used_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at = Column(DateTime, server_default=func.now())
+    used_at = Column(DateTime, nullable=True)
 
 
 class Account(Base):
@@ -16,5 +38,6 @@ class Account(Base):
     status = Column(String, nullable=False, default="available")
     remark = Column(String, nullable=True, default="")
     redeemed_at = Column(String, nullable=True)
+    created_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())

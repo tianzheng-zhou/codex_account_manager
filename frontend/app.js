@@ -6,19 +6,179 @@ const API = '/api';
 let debounceTimer = null;
 let currentView = 'dashboard';
 let currentShop = null;
+let currentUser = null;
 
 const SHOP_VIEW_MAP = {
   'shop:gpt-cw': { shop: 'gpt-cw', elId: 'viewShopGptCw' },
 };
 
-// ---- Init ----
-document.addEventListener('DOMContentLoaded', () => {
+// ---- Auth helpers ----
+function getToken() { return localStorage.getItem('token'); }
+function setToken(t) { localStorage.setItem('token', t); }
+function clearToken() { localStorage.removeItem('token'); }
+
+function authHeaders() {
+  const t = getToken();
+  return t ? { 'Authorization': 'Bearer ' + t } : {};
+}
+
+async function authFetch(url, opts = {}) {
+  opts.headers = { ...authHeaders(), ...(opts.headers || {}) };
+  const resp = await fetch(url, opts);
+  if (resp.status === 401) {
+    clearToken();
+    currentUser = null;
+    showAuthScreen();
+  }
+  return resp;
+}
+
+// ---- Auth Screen ----
+function showAuthScreen() {
+  document.getElementById('authScreen').style.display = 'flex';
+  document.getElementById('appLayout').style.display = 'none';
+}
+
+function showAppScreen() {
+  document.getElementById('authScreen').style.display = 'none';
+  document.getElementById('appLayout').style.display = '';
+}
+
+function showAuthTab(tab) {
+  document.getElementById('authLogin').style.display = tab === 'login' ? '' : 'none';
+  document.getElementById('authRegister').style.display = tab === 'register' ? '' : 'none';
+}
+
+async function handleLogin(e) {
+  e.preventDefault();
+  const btn = document.getElementById('loginBtn');
+  const msg = document.getElementById('loginMsg');
+  const username = document.getElementById('loginUsername').value.trim();
+  const password = document.getElementById('loginPassword').value;
+
+  btn.disabled = true;
+  msg.style.display = 'none';
+
+  try {
+    const resp = await fetch(`${API}/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password }),
+    });
+    const data = await resp.json();
+    if (resp.ok) {
+      setToken(data.access_token);
+      await initApp();
+    } else {
+      msg.textContent = data.detail || '登录失败';
+      msg.className = 'auth-msg error';
+      msg.style.display = 'block';
+    }
+  } catch {
+    msg.textContent = '网络错误';
+    msg.className = 'auth-msg error';
+    msg.style.display = 'block';
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function handleRegister(e) {
+  e.preventDefault();
+  const btn = document.getElementById('regBtn');
+  const msg = document.getElementById('regMsg');
+  const username = document.getElementById('regUsername').value.trim();
+  const password = document.getElementById('regPassword').value;
+  const password2 = document.getElementById('regPassword2').value;
+  const invite_code = document.getElementById('regInviteCode').value.trim() || null;
+
+  if (password !== password2) {
+    msg.textContent = '两次密码不一致';
+    msg.className = 'auth-msg error';
+    msg.style.display = 'block';
+    return;
+  }
+
+  btn.disabled = true;
+  msg.style.display = 'none';
+
+  try {
+    const resp = await fetch(`${API}/auth/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password, invite_code }),
+    });
+    const data = await resp.json();
+    if (resp.ok) {
+      if (data.is_approved) {
+        msg.textContent = '注册成功，请登录';
+        msg.className = 'auth-msg success';
+      } else {
+        msg.textContent = '注册成功，请等待管理员审核后登录';
+        msg.className = 'auth-msg success';
+      }
+      msg.style.display = 'block';
+    } else {
+      msg.textContent = data.detail || '注册失败';
+      msg.className = 'auth-msg error';
+      msg.style.display = 'block';
+    }
+  } catch {
+    msg.textContent = '网络错误';
+    msg.className = 'auth-msg error';
+    msg.style.display = 'block';
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function handleLogout() {
+  clearToken();
+  currentUser = null;
+  showAuthScreen();
+}
+
+async function initApp() {
+  try {
+    const resp = await authFetch(`${API}/auth/me`);
+    if (!resp.ok) { showAuthScreen(); return; }
+    currentUser = await resp.json();
+  } catch {
+    showAuthScreen();
+    return;
+  }
+
+  showAppScreen();
+
+  // sidebar
   const saved = localStorage.getItem('sidebarCollapsed');
   if (saved === 'true') {
     document.getElementById('sidebar').classList.add('collapsed');
     updateToggleIcon();
   }
+
+  document.getElementById('sidebarUsername').textContent = currentUser.username;
+  document.getElementById('adminNav').style.display = currentUser.role === 'admin' ? '' : 'none';
+
+  applyRoleUI();
   switchView('dashboard');
+  lucide.createIcons();
+}
+
+function applyRoleUI() {
+  const isAdmin = currentUser && currentUser.role === 'admin';
+  document.querySelectorAll('.admin-only').forEach(el => {
+    el.style.display = isAdmin ? '' : 'none';
+  });
+}
+
+// ---- Init ----
+document.addEventListener('DOMContentLoaded', () => {
+  if (getToken()) {
+    initApp();
+  } else {
+    showAuthScreen();
+  }
   lucide.createIcons();
 });
 
@@ -52,6 +212,8 @@ function switchView(view) {
   Object.entries(SHOP_VIEW_MAP).forEach(([key, cfg]) => {
     document.getElementById(cfg.elId).style.display = view === key ? 'block' : 'none';
   });
+  document.getElementById('viewUsers').style.display = view === 'users' ? 'block' : 'none';
+  document.getElementById('viewInvites').style.display = view === 'invites' ? 'block' : 'none';
 
   if (view === 'dashboard') {
     currentShop = null;
@@ -60,6 +222,10 @@ function switchView(view) {
     currentShop = SHOP_VIEW_MAP[view].shop;
     loadShopStats();
     loadAccounts();
+  } else if (view === 'users') {
+    loadUsers();
+  } else if (view === 'invites') {
+    loadInviteCodes();
   }
 }
 
@@ -133,7 +299,7 @@ function renderStatsHTML(data) {
 
 async function loadStats() {
   try {
-    const resp = await fetch(`${API}/stats`);
+    const resp = await authFetch(`${API}/stats`);
     const data = await resp.json();
     document.getElementById('statsRow').innerHTML = renderStatsHTML(data);
   } catch (e) {
@@ -144,7 +310,7 @@ async function loadStats() {
 async function loadShopStats() {
   if (!currentShop) return;
   try {
-    const resp = await fetch(`${API}/stats?shop=${currentShop}`);
+    const resp = await authFetch(`${API}/stats?shop=${currentShop}`);
     const data = await resp.json();
     document.getElementById('shopStatsRow').innerHTML = renderStatsHTML(data);
   } catch (e) {
@@ -175,7 +341,7 @@ async function loadAccounts() {
   if (status) params.set('status', status);
 
   try {
-    const resp = await fetch(`${API}/accounts?${params}`);
+    const resp = await authFetch(`${API}/accounts?${params}`);
     const accounts = await resp.json();
     renderAccounts(accounts);
   } catch (e) {
@@ -209,9 +375,9 @@ function renderAccounts(accounts) {
           <button class="btn-icon" title="${a.status === 'archived' ? '取消归档' : '归档'}" onclick="toggleArchive(${a.id}, '${a.status}')">
             <i data-lucide="${a.status === 'archived' ? 'archive-restore' : 'archive'}"></i>
           </button>
-          <button class="btn-icon" title="删除" onclick="confirmDelete(${a.id})">
+          ${currentUser && currentUser.role === 'admin' ? `<button class="btn-icon" title="删除" onclick="confirmDelete(${a.id})">
             <i data-lucide="trash-2"></i>
-          </button>
+          </button>` : ''}
         </div>
       </div>
       <div class="card-fields">
@@ -304,7 +470,7 @@ async function handleRedeem() {
   msg.style.display = 'none';
 
   try {
-    const resp = await fetch(`${API}/accounts/redeem`, {
+    const resp = await authFetch(`${API}/accounts/redeem`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ key, shop: currentShop || 'gpt-cw' }),
@@ -387,7 +553,7 @@ async function handleFormSubmit(e) {
     };
 
     try {
-      const resp = await fetch(`${API}/accounts/${editId}`, {
+      const resp = await authFetch(`${API}/accounts/${editId}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
@@ -415,7 +581,7 @@ async function handleFormSubmit(e) {
     };
 
     try {
-      const resp = await fetch(`${API}/accounts`, {
+      const resp = await authFetch(`${API}/accounts`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
@@ -437,7 +603,7 @@ async function handleFormSubmit(e) {
 async function toggleArchive(id, currentStatus) {
   const newStatus = currentStatus === 'archived' ? 'available' : 'archived';
   try {
-    const resp = await fetch(`${API}/accounts/${id}`, {
+    const resp = await authFetch(`${API}/accounts/${id}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ status: newStatus }),
@@ -460,7 +626,7 @@ function confirmDelete(id) {
   document.getElementById('deleteOverlay').style.display = 'flex';
   document.getElementById('confirmDeleteBtn').onclick = async () => {
     try {
-      const resp = await fetch(`${API}/accounts/${id}`, { method: 'DELETE' });
+      const resp = await authFetch(`${API}/accounts/${id}`, { method: 'DELETE' });
       if (resp.ok) {
         closeDeleteModal();
         loadShopStats();
@@ -488,7 +654,7 @@ async function fetchCode(accountId) {
   content.innerHTML = '<div class="code-loading"><span class="spinner"></span> 正在获取验证码…</div>';
 
   try {
-    const resp = await fetch(`${API}/accounts/${accountId}/fetch-code`, { method: 'POST' });
+    const resp = await authFetch(`${API}/accounts/${accountId}/fetch-code`, { method: 'POST' });
     const data = await resp.json();
 
     if (data.code) {
@@ -514,4 +680,151 @@ async function fetchCode(accountId) {
 function closeCodeModal(e) {
   if (e && e.target !== e.currentTarget) return;
   document.getElementById('codeOverlay').style.display = 'none';
+}
+
+// ---- Admin: User Management ----
+async function loadUsers() {
+  try {
+    const resp = await authFetch(`${API}/admin/users`);
+    if (!resp.ok) return;
+    const users = await resp.json();
+    renderUsers(users);
+  } catch (e) {
+    console.error('Failed to load users:', e);
+  }
+}
+
+function renderUsers(users) {
+  const list = document.getElementById('userList');
+  if (users.length === 0) {
+    list.innerHTML = '<div class="empty-state"><p>暂无用户</p></div>';
+    return;
+  }
+
+  list.innerHTML = `
+    <div class="admin-table">
+      <div class="admin-table-header">
+        <span>ID</span>
+        <span>用户名</span>
+        <span>角色</span>
+        <span>状态</span>
+        <span>注册时间</span>
+        <span>操作</span>
+      </div>
+      ${users.map(u => `
+        <div class="admin-table-row">
+          <span>${u.id}</span>
+          <span class="user-name-cell">${escapeHtml(u.username)}</span>
+          <span><span class="badge badge-${u.role}">${u.role === 'admin' ? '管理员' : '用户'}</span></span>
+          <span><span class="badge badge-${u.is_approved ? 'available' : 'pending'}">${u.is_approved ? '已激活' : '待审核'}</span></span>
+          <span class="ds-meta">${u.created_at ? new Date(u.created_at).toLocaleString('zh-CN') : '—'}</span>
+          <span class="cell-actions">
+            ${!u.is_approved ? `<button class="btn btn-sm btn-primary" onclick="approveUser(${u.id})">审核通过</button>` : ''}
+            ${u.role !== 'admin' ? `<button class="btn btn-sm btn-outline btn-danger-text" onclick="deleteUser(${u.id}, '${escapeJs(u.username)}')">删除</button>` : ''}
+          </span>
+        </div>
+      `).join('')}
+    </div>
+  `;
+  lucide.createIcons({ nodes: list.querySelectorAll('[data-lucide]') });
+}
+
+async function approveUser(userId) {
+  try {
+    const resp = await authFetch(`${API}/admin/users/${userId}/approve`, { method: 'PUT' });
+    if (resp.ok) {
+      showToast('已审核通过', 'success');
+      loadUsers();
+    } else {
+      const data = await resp.json();
+      showToast(data.detail || '操作失败', 'error');
+    }
+  } catch { showToast('网络错误', 'error'); }
+}
+
+async function deleteUser(userId, username) {
+  if (!confirm(`确定要删除用户「${username}」吗？该用户录入的账号数据将保留。`)) return;
+  try {
+    const resp = await authFetch(`${API}/admin/users/${userId}`, { method: 'DELETE' });
+    if (resp.ok) {
+      showToast('用户已删除', 'success');
+      loadUsers();
+    } else {
+      const data = await resp.json();
+      showToast(data.detail || '删除失败', 'error');
+    }
+  } catch { showToast('网络错误', 'error'); }
+}
+
+// ---- Admin: Invite Codes ----
+async function loadInviteCodes() {
+  try {
+    const resp = await authFetch(`${API}/admin/invite-codes`);
+    if (!resp.ok) return;
+    const codes = await resp.json();
+    renderInviteCodes(codes);
+  } catch (e) {
+    console.error('Failed to load invite codes:', e);
+  }
+}
+
+function renderInviteCodes(codes) {
+  const list = document.getElementById('inviteList');
+  if (codes.length === 0) {
+    list.innerHTML = '<div class="empty-state"><p>暂无邀请码，点击上方按钮生成。</p></div>';
+    return;
+  }
+
+  list.innerHTML = `
+    <div class="admin-table">
+      <div class="admin-table-header invite-cols">
+        <span>邀请码</span>
+        <span>状态</span>
+        <span>使用者 ID</span>
+        <span>创建时间</span>
+        <span>操作</span>
+      </div>
+      ${codes.map(c => `
+        <div class="admin-table-row invite-cols">
+          <span class="invite-code-cell">
+            <code>${c.code}</code>
+            <button class="copy-btn" onclick="copyText('${escapeJs(c.code)}', this)"><i data-lucide="copy"></i></button>
+          </span>
+          <span><span class="badge badge-${c.used_by ? 'archived' : 'available'}">${c.used_by ? '已使用' : '未使用'}</span></span>
+          <span>${c.used_by || '—'}</span>
+          <span class="ds-meta">${c.created_at ? new Date(c.created_at).toLocaleString('zh-CN') : '—'}</span>
+          <span class="cell-actions">
+            <button class="btn btn-sm btn-outline btn-danger-text" onclick="deleteInviteCode(${c.id})">删除</button>
+          </span>
+        </div>
+      `).join('')}
+    </div>
+  `;
+  lucide.createIcons({ nodes: list.querySelectorAll('[data-lucide]') });
+}
+
+async function generateInviteCode() {
+  try {
+    const resp = await authFetch(`${API}/admin/invite-codes`, { method: 'POST' });
+    if (resp.ok) {
+      const data = await resp.json();
+      showToast('邀请码已生成: ' + data.code, 'success');
+      loadInviteCodes();
+    } else {
+      const data = await resp.json();
+      showToast(data.detail || '生成失败', 'error');
+    }
+  } catch { showToast('网络错误', 'error'); }
+}
+
+async function deleteInviteCode(codeId) {
+  try {
+    const resp = await authFetch(`${API}/admin/invite-codes/${codeId}`, { method: 'DELETE' });
+    if (resp.ok) {
+      showToast('邀请码已删除', 'success');
+      loadInviteCodes();
+    } else {
+      showToast('删除失败', 'error');
+    }
+  } catch { showToast('网络错误', 'error'); }
 }

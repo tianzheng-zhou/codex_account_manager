@@ -57,3 +57,44 @@ class FetchCodeResponse(BaseModel):
     subject: Optional[str] = None
     received_at: Optional[str] = None
     error: Optional[str] = None
+
+
+# ---- Auth Schemas ----
+
+class RegisterRequest(BaseModel):
+    username: str
+    password: str
+    invite_code: Optional[str] = None
+
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+class TokenResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+
+
+class UserOut(BaseModel):
+    id: int
+    username: str
+    role: str
+    is_approved: bool
+    created_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
+class InviteCodeOut(BaseModel):
+    id: int
+    code: str
+    created_by: Optional[int] = None
+    used_by: Optional[int] = None
+    created_at: Optional[datetime] = None
+    used_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True

@@ -1,14 +1,15 @@
+import secrets
 from fastapi import FastAPI, Depends, HTTPException, Query
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
-from typing import Optional
+from typing import Optional, List
 from datetime import datetime
 import os
 
 from sqlalchemy import inspect, text
 from database import engine, get_db, Base
-from models import Account
+from models import Account, User, InviteCode
 from schemas import (
     AccountCreate,
     AccountUpdate,
@@ -16,9 +17,22 @@ from schemas import (
     RedeemRequest,
     StatsOut,
     FetchCodeResponse,
+    RegisterRequest,
+    LoginRequest,
+    TokenResponse,
+    UserOut,
+    InviteCodeOut,
 )
 from scraper import redeem_key
 from mailbox import fetch_verification_code
+from auth import (
+    hash_password,
+    verify_password,
+    create_access_token,
+    get_current_user,
+    require_admin,
+    ensure_default_admin,
+)
 
 Base.metadata.create_all(bind=engine)
 
@@ -28,6 +42,11 @@ with engine.connect() as conn:
     if "shop" not in columns:
         conn.execute(text("ALTER TABLE accounts ADD COLUMN shop TEXT NOT NULL DEFAULT 'gpt-cw'"))
         conn.commit()
+    if "created_by" not in columns:
+        conn.execute(text("ALTER TABLE accounts ADD COLUMN created_by INTEGER REFERENCES users(id) ON DELETE SET NULL"))
+        conn.commit()
+
+ensure_default_admin()
 
 app = FastAPI(title="Codex 账号管理系统")
 
@@ -45,6 +64,156 @@ async def serve_index():
     return FileResponse(os.path.join(FRONTEND_DIR, "index.html"))
 
 
+# ===== Auth Routes =====
+
+@app.post("/api/auth/register", response_model=UserOut)
+def register(data: RegisterRequest, db: Session = Depends(get_db)):
+    if len(data.username) < 2:
+        raise HTTPException(status_code=400, detail="用户名至少 2 个字符")
+    if len(data.password) < 4:
+        raise HTTPException(status_code=400, detail="密码至少 4 个字符")
+
+    existing = db.query(User).filter(User.username == data.username).first()
+    if existing:
+        raise HTTPException(status_code=400, detail="用户名已存在")
+
+    is_approved = False
+    if data.invite_code:
+        invite = db.query(InviteCode).filter(
+            InviteCode.code == data.invite_code, InviteCode.used_by.is_(None)
+        ).first()
+        if not invite:
+            raise HTTPException(status_code=400, detail="邀请码无效或已被使用")
+        is_approved = True
+
+    user = User(
+        username=data.username,
+        password_hash=hash_password(data.password),
+        role="user",
+        is_approved=is_approved,
+    )
+    db.add(user)
+    db.flush()
+
+    if data.invite_code:
+        invite.used_by = user.id
+        invite.used_at = datetime.now()
+
+    db.commit()
+    db.refresh(user)
+    return UserOut.model_validate(user)
+
+
+@app.post("/api/auth/login", response_model=TokenResponse)
+def login(data: LoginRequest, db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.username == data.username).first()
+    if not user or not verify_password(data.password, user.password_hash):
+        raise HTTPException(status_code=401, detail="用户名或密码错误")
+    if not user.is_approved:
+        raise HTTPException(status_code=403, detail="账号待审核，请联系管理员")
+
+    token = create_access_token({"sub": str(user.id)})
+    return TokenResponse(access_token=token)
+
+
+@app.get("/api/auth/me", response_model=UserOut)
+def get_me(current_user: User = Depends(get_current_user)):
+    return UserOut.model_validate(current_user)
+
+
+@app.put("/api/auth/password")
+def change_password(
+    data: LoginRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if len(data.password) < 4:
+        raise HTTPException(status_code=400, detail="密码至少 4 个字符")
+    current_user.password_hash = hash_password(data.password)
+    db.commit()
+    return {"ok": True}
+
+
+# ===== Admin Routes =====
+
+@app.get("/api/admin/users", response_model=List[UserOut])
+def admin_list_users(
+    db: Session = Depends(get_db),
+    _admin: User = Depends(require_admin),
+):
+    users = db.query(User).order_by(User.id.asc()).all()
+    return [UserOut.model_validate(u) for u in users]
+
+
+@app.put("/api/admin/users/{user_id}/approve", response_model=UserOut)
+def admin_approve_user(
+    user_id: int,
+    db: Session = Depends(get_db),
+    _admin: User = Depends(require_admin),
+):
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="用户不存在")
+    user.is_approved = True
+    db.commit()
+    db.refresh(user)
+    return UserOut.model_validate(user)
+
+
+@app.delete("/api/admin/users/{user_id}")
+def admin_delete_user(
+    user_id: int,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin),
+):
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="用户不存在")
+    if user.id == admin.id:
+        raise HTTPException(status_code=400, detail="不能删除自己")
+    db.delete(user)
+    db.commit()
+    return {"ok": True}
+
+
+@app.post("/api/admin/invite-codes", response_model=InviteCodeOut)
+def admin_create_invite_code(
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin),
+):
+    code = secrets.token_urlsafe(8).upper()
+    invite = InviteCode(code=code, created_by=admin.id)
+    db.add(invite)
+    db.commit()
+    db.refresh(invite)
+    return InviteCodeOut.model_validate(invite)
+
+
+@app.get("/api/admin/invite-codes", response_model=List[InviteCodeOut])
+def admin_list_invite_codes(
+    db: Session = Depends(get_db),
+    _admin: User = Depends(require_admin),
+):
+    codes = db.query(InviteCode).order_by(InviteCode.id.desc()).all()
+    return [InviteCodeOut.model_validate(c) for c in codes]
+
+
+@app.delete("/api/admin/invite-codes/{code_id}")
+def admin_delete_invite_code(
+    code_id: int,
+    db: Session = Depends(get_db),
+    _admin: User = Depends(require_admin),
+):
+    invite = db.query(InviteCode).filter(InviteCode.id == code_id).first()
+    if not invite:
+        raise HTTPException(status_code=404, detail="邀请码不存在")
+    db.delete(invite)
+    db.commit()
+    return {"ok": True}
+
+
+# ===== Account Routes (protected) =====
+
 @app.get("/api/accounts")
 def list_accounts(
     search: Optional[str] = Query(None),
@@ -52,6 +221,7 @@ def list_accounts(
     status: Optional[str] = Query(None),
     shop: Optional[str] = Query(None),
     db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
 ):
     q = db.query(Account)
     if shop:
@@ -73,12 +243,16 @@ def list_accounts(
 
 
 @app.post("/api/accounts", response_model=AccountOut)
-def create_account(data: AccountCreate, db: Session = Depends(get_db)):
+def create_account(
+    data: AccountCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     existing = db.query(Account).filter(Account.redeem_key == data.redeem_key).first()
     if existing:
         raise HTTPException(status_code=400, detail="该兑换密钥已存在")
 
-    account = Account(**data.model_dump())
+    account = Account(**data.model_dump(), created_by=current_user.id)
     db.add(account)
     db.commit()
     db.refresh(account)
@@ -86,7 +260,11 @@ def create_account(data: AccountCreate, db: Session = Depends(get_db)):
 
 
 @app.post("/api/accounts/redeem", response_model=AccountOut)
-async def redeem_account(req: RedeemRequest, db: Session = Depends(get_db)):
+async def redeem_account(
+    req: RedeemRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     existing = db.query(Account).filter(Account.redeem_key == req.key).first()
     if existing:
         raise HTTPException(status_code=400, detail="该兑换密钥已录入系统")
@@ -114,6 +292,7 @@ async def redeem_account(req: RedeemRequest, db: Session = Depends(get_db)):
         code_url=info.get("code_url"),
         redeemed_at=info.get("redeemed_at") or datetime.now().strftime("%Y-%m-%d %H:%M"),
         status="available",
+        created_by=current_user.id,
     )
     db.add(account)
     db.commit()
@@ -123,7 +302,10 @@ async def redeem_account(req: RedeemRequest, db: Session = Depends(get_db)):
 
 @app.put("/api/accounts/{account_id}", response_model=AccountOut)
 def update_account(
-    account_id: int, data: AccountUpdate, db: Session = Depends(get_db)
+    account_id: int,
+    data: AccountUpdate,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
 ):
     account = db.query(Account).filter(Account.id == account_id).first()
     if not account:
@@ -139,7 +321,11 @@ def update_account(
 
 
 @app.delete("/api/accounts/{account_id}")
-def delete_account(account_id: int, db: Session = Depends(get_db)):
+def delete_account(
+    account_id: int,
+    db: Session = Depends(get_db),
+    _admin: User = Depends(require_admin),
+):
     account = db.query(Account).filter(Account.id == account_id).first()
     if not account:
         raise HTTPException(status_code=404, detail="账号不存在")
@@ -152,6 +338,7 @@ def delete_account(account_id: int, db: Session = Depends(get_db)):
 def get_stats(
     shop: Optional[str] = Query(None),
     db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
 ):
     q = db.query(Account)
     if shop:
@@ -168,7 +355,11 @@ def get_stats(
 
 
 @app.post("/api/accounts/{account_id}/fetch-code", response_model=FetchCodeResponse)
-async def fetch_code(account_id: int, db: Session = Depends(get_db)):
+async def fetch_code(
+    account_id: int,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+):
     account = db.query(Account).filter(Account.id == account_id).first()
     if not account:
         raise HTTPException(status_code=404, detail="账号不存在")
