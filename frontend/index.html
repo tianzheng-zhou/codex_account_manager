@@ -50,10 +50,10 @@
             <input type="text" id="regUsername" class="input" placeholder="至少 2 个字符" required>
           </label>
           <label class="form-label">密码
-            <input type="password" id="regPassword" class="input" placeholder="至少 4 个字符" required>
+            <input type="password" id="regPassword" class="input" placeholder="至少 8 个字符" required minlength="8">
           </label>
           <label class="form-label">确认密码
-            <input type="password" id="regPassword2" class="input" placeholder="再次输入密码" required>
+            <input type="password" id="regPassword2" class="input" placeholder="再次输入密码" required minlength="8">
           </label>
           <label class="form-label">邀请码 <span class="ds-meta">（可选，有邀请码免审核）</span>
             <input type="text" id="regInviteCode" class="input" placeholder="留空则需管理员审核">
@@ -108,6 +108,14 @@
           <i data-lucide="circle-user"></i>
           <span class="nav-label" id="sidebarUsername">—</span>
         </div>
+        <button class="nav-item" id="adminViewToggle" onclick="toggleAdminView()" style="display:none;" title="切换管理员视角">
+          <i data-lucide="eye"></i>
+          <span class="nav-label">管理员视角</span>
+        </button>
+        <button class="nav-item" onclick="openChangePasswordModal()" title="修改密码">
+          <i data-lucide="key"></i>
+          <span class="nav-label">修改密码</span>
+        </button>
         <button class="nav-item" onclick="handleLogout()">
           <i data-lucide="log-out"></i>
           <span class="nav-label">退出</span>
@@ -177,6 +185,12 @@
               <option value="">全部状态</option>
               <option value="available">可用</option>
               <option value="archived">已归档</option>
+            </select>
+            <select id="scopeFilter" class="input input-select" onchange="loadAccounts()">
+              <option value="">全部可见</option>
+              <option value="mine">我的</option>
+              <option value="shared">共享给我</option>
+              <option value="orphan" data-admin-only>无主（管理员）</option>
             </select>
           </div>
           <button class="btn btn-outline" onclick="openAddModal()">
@@ -288,6 +302,46 @@
         <button class="btn-icon" onclick="closeCodeModal()"><i data-lucide="x"></i></button>
       </div>
       <div id="codeContent"></div>
+    </div>
+  </div>
+
+  <!-- Share / Transfer / Claim Modal -->
+  <div class="modal-overlay" id="shareOverlay" style="display:none;" onclick="closeShareModal(event)">
+    <div class="modal" onclick="event.stopPropagation()">
+      <div class="modal-header">
+        <h3 class="ds-h3">共享与转让</h3>
+        <button class="btn-icon" onclick="closeShareModal()"><i data-lucide="x"></i></button>
+      </div>
+      <div id="shareBody"></div>
+      <div class="modal-actions">
+        <button class="btn btn-outline" onclick="closeShareModal()">关闭</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Change Password Modal -->
+  <div class="modal-overlay" id="changePwOverlay" style="display:none;" onclick="closeChangePasswordModal(event)">
+    <div class="modal modal-sm" onclick="event.stopPropagation()">
+      <div class="modal-header">
+        <h3 class="ds-h3">修改密码</h3>
+        <button class="btn-icon" onclick="closeChangePasswordModal()"><i data-lucide="x"></i></button>
+      </div>
+      <form id="changePwForm" onsubmit="handleChangePassword(event)">
+        <label class="form-label">当前密码
+          <input type="password" id="cpOldPassword" class="input" required autocomplete="current-password">
+        </label>
+        <label class="form-label">新密码 <span class="ds-meta">（至少 8 字符）</span>
+          <input type="password" id="cpNewPassword" class="input" required autocomplete="new-password" minlength="8">
+        </label>
+        <label class="form-label">确认新密码
+          <input type="password" id="cpNewPassword2" class="input" required autocomplete="new-password" minlength="8">
+        </label>
+        <div id="changePwMsg" class="auth-msg" style="display:none;"></div>
+        <div class="modal-actions">
+          <button type="button" class="btn btn-outline" onclick="closeChangePasswordModal()">取消</button>
+          <button type="submit" class="btn btn-primary">保存</button>
+        </div>
+      </form>
     </div>
   </div>
 

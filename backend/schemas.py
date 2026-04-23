@@ -31,6 +31,10 @@ class AccountUpdate(BaseModel):
 
 class AccountOut(AccountBase):
     id: int
+    created_by: Optional[int] = None
+    owner_username: Optional[str] = None
+    shared_with: list[dict] = []
+    relation: str = "owner"  # "owner" | "shared" | "admin" | "orphan"
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
@@ -86,6 +90,32 @@ class UserOut(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class UserBrief(BaseModel):
+    """Minimal info returned to non-admin users (e.g., owner name, share list)."""
+    id: int
+    username: str
+
+    class Config:
+        from_attributes = True
+
+
+class ChangePasswordRequest(BaseModel):
+    old_password: str
+    new_password: str
+
+
+class ShareRequest(BaseModel):
+    username: str
+
+
+class TransferRequest(BaseModel):
+    username: str
+
+
+class ClaimRequest(BaseModel):
+    username: str
 
 
 class InviteCodeOut(BaseModel):

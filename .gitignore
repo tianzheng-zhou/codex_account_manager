@@ -4,6 +4,9 @@ venv/
 # Database
 *.db
 
+# JWT signing key (auto-generated on first run)
+.jwt_secret
+
 # Python
 __pycache__/
 *.py[cod]

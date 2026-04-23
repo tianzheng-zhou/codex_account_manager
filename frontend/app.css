@@ -932,6 +932,131 @@ html, body {
 .badge-user { background: var(--bg-2); color: var(--fg-2); }
 .badge-pending { background: color-mix(in srgb, var(--color-warning) 15%, transparent); color: var(--color-warning); }
 
+/* ---- Relation badges ---- */
+.badge-rel-owner {
+  background: color-mix(in srgb, var(--color-accent) 15%, transparent);
+  color: var(--color-accent);
+}
+.badge-rel-shared {
+  background: color-mix(in srgb, var(--color-success) 15%, transparent);
+  color: var(--color-success);
+}
+.badge-rel-admin {
+  background: var(--bg-2);
+  color: var(--fg-2);
+}
+.badge-rel-orphan {
+  background: color-mix(in srgb, var(--color-warning) 18%, transparent);
+  color: var(--color-warning);
+}
+
+/* ---- Share Modal ---- */
+.share-section {
+  padding: var(--space-4) 0;
+  border-bottom: 1px solid var(--color-border);
+}
+.share-section:last-of-type { border-bottom: none; }
+
+.share-section h4 {
+  margin: 0 0 var(--space-3);
+  font-size: var(--text-base);
+}
+
+.share-owner {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+.share-add {
+  display: flex;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+  margin-bottom: var(--space-2);
+}
+
+.share-add .input { flex: 1; }
+
+.share-users {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.share-user-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: var(--space-2) var(--space-3);
+  background: var(--bg-2);
+  border-radius: var(--radius-m);
+}
+
+.share-user-row svg {
+  width: 16px;
+  height: 16px;
+  vertical-align: middle;
+  margin-right: var(--space-1);
+}
+
+/* ---- User Picker (combobox) ---- */
+.user-picker-mount { flex: 1; }
+
+.user-picker {
+  position: relative;
+  display: block;
+}
+
+.user-picker-input {
+  width: 100%;
+}
+
+.user-picker-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 20;
+  background: var(--bg-1);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-m);
+  box-shadow: var(--shadow-m, 0 6px 24px rgba(0,0,0,0.08));
+  max-height: 240px;
+  overflow-y: auto;
+  padding: var(--space-1);
+}
+
+.user-picker-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-s);
+  cursor: pointer;
+  font-size: var(--text-sm);
+  color: var(--fg-1);
+  user-select: none;
+}
+
+.user-picker-item svg {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  color: var(--fg-3);
+}
+
+.user-picker-item:hover,
+.user-picker-item.active {
+  background: var(--bg-2);
+}
+
+.user-picker-empty {
+  padding: var(--space-3);
+  color: var(--fg-3);
+  font-size: var(--text-sm);
+  text-align: center;
+}
+
 /* ---- Responsive ---- */
 @media (max-width: 768px) {
   .sidebar {
