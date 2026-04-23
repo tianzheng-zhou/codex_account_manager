@@ -4,13 +4,64 @@
 
 const API = '/api';
 let debounceTimer = null;
+let currentView = 'dashboard';
+let currentShop = null;
+
+const SHOP_VIEW_MAP = {
+  'shop:gpt-cw': { shop: 'gpt-cw', elId: 'viewShopGptCw' },
+};
 
 // ---- Init ----
 document.addEventListener('DOMContentLoaded', () => {
-  loadStats();
-  loadAccounts();
+  const saved = localStorage.getItem('sidebarCollapsed');
+  if (saved === 'true') {
+    document.getElementById('sidebar').classList.add('collapsed');
+    updateToggleIcon();
+  }
+  switchView('dashboard');
   lucide.createIcons();
 });
+
+// ---- Sidebar ----
+function toggleSidebar() {
+  const sidebar = document.getElementById('sidebar');
+  sidebar.classList.toggle('collapsed');
+  localStorage.setItem('sidebarCollapsed', sidebar.classList.contains('collapsed'));
+  updateToggleIcon();
+}
+
+function updateToggleIcon() {
+  const sidebar = document.getElementById('sidebar');
+  const icon = document.getElementById('toggleIcon');
+  const isCollapsed = sidebar.classList.contains('collapsed');
+  icon.setAttribute('data-lucide', isCollapsed ? 'panel-left-open' : 'panel-left-close');
+  lucide.createIcons({ nodes: [icon] });
+  const label = icon.closest('.nav-item')?.querySelector('.nav-label');
+  if (label) label.textContent = isCollapsed ? '展开' : '收起';
+}
+
+// ---- View Switching ----
+function switchView(view) {
+  currentView = view;
+
+  document.querySelectorAll('.nav-item[data-view]').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.view === view);
+  });
+
+  document.getElementById('viewDashboard').style.display = view === 'dashboard' ? 'block' : 'none';
+  Object.entries(SHOP_VIEW_MAP).forEach(([key, cfg]) => {
+    document.getElementById(cfg.elId).style.display = view === key ? 'block' : 'none';
+  });
+
+  if (view === 'dashboard') {
+    currentShop = null;
+    loadStats();
+  } else if (SHOP_VIEW_MAP[view]) {
+    currentShop = SHOP_VIEW_MAP[view].shop;
+    loadShopStats();
+    loadAccounts();
+  }
+}
 
 // ---- Toast ----
 function showToast(msg, type = 'info') {
@@ -27,54 +78,77 @@ function showToast(msg, type = 'info') {
 }
 
 // ---- Copy to Clipboard ----
-function copyText(text) {
-  navigator.clipboard.writeText(text).then(() => {
+function copyText(text, btnEl) {
+  const doCopy = () => {
+    if (btnEl) {
+      const origHTML = btnEl.innerHTML;
+      btnEl.innerHTML = '<i data-lucide="check"></i>';
+      btnEl.style.color = 'var(--color-success)';
+      lucide.createIcons({ nodes: btnEl.querySelectorAll('[data-lucide]') });
+      setTimeout(() => {
+        btnEl.innerHTML = origHTML;
+        btnEl.style.color = '';
+        lucide.createIcons({ nodes: btnEl.querySelectorAll('[data-lucide]') });
+      }, 1500);
+    }
     showToast('已复制', 'success');
-  }).catch(() => {
+  };
+
+  navigator.clipboard.writeText(text).then(doCopy).catch(() => {
     const ta = document.createElement('textarea');
     ta.value = text;
     document.body.appendChild(ta);
     ta.select();
     document.execCommand('copy');
     document.body.removeChild(ta);
-    showToast('已复制', 'success');
+    doCopy();
   });
 }
 
 // ---- Stats ----
+function renderStatsHTML(data) {
+  return `
+    <div class="stat-card">
+      <p class="stat-label">总数</p>
+      <p class="stat-value">${data.total}</p>
+    </div>
+    <div class="stat-card accent">
+      <p class="stat-label">Team</p>
+      <p class="stat-value">${data.team}</p>
+    </div>
+    <div class="stat-card">
+      <p class="stat-label">Plus</p>
+      <p class="stat-value">${data.plus}</p>
+    </div>
+    <div class="stat-card success">
+      <p class="stat-label">可用</p>
+      <p class="stat-value">${data.available}</p>
+    </div>
+    <div class="stat-card warning">
+      <p class="stat-label">已归档</p>
+      <p class="stat-value">${data.archived}</p>
+    </div>
+  `;
+}
+
 async function loadStats() {
   try {
     const resp = await fetch(`${API}/stats`);
     const data = await resp.json();
-    const row = document.getElementById('statsRow');
-    row.innerHTML = `
-      <div class="stat-card">
-        <p class="stat-label">总数</p>
-        <p class="stat-value">${data.total}</p>
-      </div>
-      <div class="stat-card accent">
-        <p class="stat-label">Team</p>
-        <p class="stat-value">${data.team}</p>
-      </div>
-      <div class="stat-card">
-        <p class="stat-label">Plus</p>
-        <p class="stat-value">${data.plus}</p>
-      </div>
-      <div class="stat-card success">
-        <p class="stat-label">可用</p>
-        <p class="stat-value">${data.available}</p>
-      </div>
-      <div class="stat-card warning">
-        <p class="stat-label">已分配</p>
-        <p class="stat-value">${data.assigned}</p>
-      </div>
-      <div class="stat-card danger">
-        <p class="stat-label">已过期</p>
-        <p class="stat-value">${data.expired}</p>
-      </div>
-    `;
+    document.getElementById('statsRow').innerHTML = renderStatsHTML(data);
   } catch (e) {
     console.error('Failed to load stats:', e);
+  }
+}
+
+async function loadShopStats() {
+  if (!currentShop) return;
+  try {
+    const resp = await fetch(`${API}/stats?shop=${currentShop}`);
+    const data = await resp.json();
+    document.getElementById('shopStatsRow').innerHTML = renderStatsHTML(data);
+  } catch (e) {
+    console.error('Failed to load shop stats:', e);
   }
 }
 
@@ -85,11 +159,17 @@ function debounceLoad() {
 }
 
 async function loadAccounts() {
-  const search = document.getElementById('searchInput').value.trim();
-  const type = document.getElementById('typeFilter').value;
-  const status = document.getElementById('statusFilter').value;
+  const searchEl = document.getElementById('searchInput');
+  const typeEl = document.getElementById('typeFilter');
+  const statusEl = document.getElementById('statusFilter');
+  if (!searchEl || !typeEl || !statusEl) return;
+
+  const search = searchEl.value.trim();
+  const type = typeEl.value;
+  const status = statusEl.value;
 
   const params = new URLSearchParams();
+  if (currentShop) params.set('shop', currentShop);
   if (search) params.set('search', search);
   if (type) params.set('account_type', type);
   if (status) params.set('status', status);
@@ -126,6 +206,9 @@ function renderAccounts(accounts) {
           <button class="btn-icon" title="编辑" onclick='openEditModal(${JSON.stringify(a)})'>
             <i data-lucide="pencil"></i>
           </button>
+          <button class="btn-icon" title="${a.status === 'archived' ? '取消归档' : '归档'}" onclick="toggleArchive(${a.id}, '${a.status}')">
+            <i data-lucide="${a.status === 'archived' ? 'archive-restore' : 'archive'}"></i>
+          </button>
           <button class="btn-icon" title="删除" onclick="confirmDelete(${a.id})">
             <i data-lucide="trash-2"></i>
           </button>
@@ -136,22 +219,22 @@ function renderAccounts(accounts) {
           <span class="field-label">邮箱</span>
           <span class="field-value">
             <span>${a.email}</span>
-            <button class="copy-btn" onclick="copyText('${escapeJs(a.email)}')"><i data-lucide="copy"></i></button>
+            <button class="copy-btn" onclick="copyText('${escapeJs(a.email)}', this)"><i data-lucide="copy"></i></button>
           </span>
         </div>
         <div class="field">
           <span class="field-label">密码</span>
           <span class="field-value">
             <span>${a.password}</span>
-            <button class="copy-btn" onclick="copyText('${escapeJs(a.password)}')"><i data-lucide="copy"></i></button>
+            <button class="copy-btn" onclick="copyText('${escapeJs(a.password)}', this)"><i data-lucide="copy"></i></button>
           </span>
         </div>
-        <div class="field" style="grid-column: 1 / -1;">
+        <div class="field">
           <span class="field-label">收码链接</span>
           <span class="field-value">
             ${a.code_url
-              ? `<a href="${a.code_url}" target="_blank" rel="noopener">${truncate(a.code_url, 60)}</a>
-                 <button class="copy-btn" onclick="copyText('${escapeJs(a.code_url)}')"><i data-lucide="copy"></i></button>`
+              ? `<a href="${a.code_url}" target="_blank" rel="noopener">${truncate(a.code_url, 40)}</a>
+                 <button class="copy-btn" onclick="copyText('${escapeJs(a.code_url)}', this)"><i data-lucide="copy"></i></button>`
               : '<span style="color:var(--fg-3)">—</span>'
             }
           </span>
@@ -186,7 +269,7 @@ function createEmptyState() {
 }
 
 function statusLabel(s) {
-  const map = { available: '可用', assigned: '已分配', expired: '已过期' };
+  const map = { available: '可用', archived: '已归档' };
   return map[s] || s;
 }
 
@@ -224,7 +307,7 @@ async function handleRedeem() {
     const resp = await fetch(`${API}/accounts/redeem`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ key }),
+      body: JSON.stringify({ key, shop: currentShop || 'gpt-cw' }),
     });
     const data = await resp.json();
 
@@ -233,7 +316,7 @@ async function handleRedeem() {
       msg.textContent = `兑换成功！邮箱：${data.email}`;
       msg.style.display = 'block';
       input.value = '';
-      loadStats();
+      loadShopStats();
       loadAccounts();
       showToast('账号已录入', 'success');
     } else {
@@ -311,7 +394,7 @@ async function handleFormSubmit(e) {
       });
       if (resp.ok) {
         closeModal();
-        loadStats();
+        loadShopStats();
         loadAccounts();
         showToast('已更新', 'success');
       } else {
@@ -322,6 +405,7 @@ async function handleFormSubmit(e) {
   } else {
     const body = {
       redeem_key: document.getElementById('fRedeemKey').value,
+      shop: currentShop || 'gpt-cw',
       account_type: document.getElementById('fAccountType').value,
       email: document.getElementById('fEmail').value,
       password: document.getElementById('fPassword').value,
@@ -338,7 +422,7 @@ async function handleFormSubmit(e) {
       });
       if (resp.ok) {
         closeModal();
-        loadStats();
+        loadShopStats();
         loadAccounts();
         showToast('已添加', 'success');
       } else {
@@ -347,6 +431,25 @@ async function handleFormSubmit(e) {
       }
     } catch { showToast('网络错误', 'error'); }
   }
+}
+
+// ---- Archive ----
+async function toggleArchive(id, currentStatus) {
+  const newStatus = currentStatus === 'archived' ? 'available' : 'archived';
+  try {
+    const resp = await fetch(`${API}/accounts/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: newStatus }),
+    });
+    if (resp.ok) {
+      loadShopStats();
+      loadAccounts();
+      showToast(newStatus === 'archived' ? '已归档' : '已取消归档', 'success');
+    } else {
+      showToast('操作失败', 'error');
+    }
+  } catch { showToast('网络错误', 'error'); }
 }
 
 // ---- Delete ----
@@ -360,7 +463,7 @@ function confirmDelete(id) {
       const resp = await fetch(`${API}/accounts/${id}`, { method: 'DELETE' });
       if (resp.ok) {
         closeDeleteModal();
-        loadStats();
+        loadShopStats();
         loadAccounts();
         showToast('已删除', 'success');
       } else {

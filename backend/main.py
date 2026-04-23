@@ -6,6 +6,7 @@ from typing import Optional
 from datetime import datetime
 import os
 
+from sqlalchemy import inspect, text
 from database import engine, get_db, Base
 from models import Account
 from schemas import (
@@ -20,6 +21,13 @@ from scraper import redeem_key
 from mailbox import fetch_verification_code
 
 Base.metadata.create_all(bind=engine)
+
+with engine.connect() as conn:
+    inspector = inspect(engine)
+    columns = [c["name"] for c in inspector.get_columns("accounts")]
+    if "shop" not in columns:
+        conn.execute(text("ALTER TABLE accounts ADD COLUMN shop TEXT NOT NULL DEFAULT 'gpt-cw'"))
+        conn.commit()
 
 app = FastAPI(title="Codex 账号管理系统")
 
@@ -42,9 +50,12 @@ def list_accounts(
     search: Optional[str] = Query(None),
     account_type: Optional[str] = Query(None),
     status: Optional[str] = Query(None),
+    shop: Optional[str] = Query(None),
     db: Session = Depends(get_db),
 ):
     q = db.query(Account)
+    if shop:
+        q = q.filter(Account.shop == shop)
     if search:
         pattern = f"%{search}%"
         q = q.filter(
@@ -96,6 +107,7 @@ async def redeem_account(req: RedeemRequest, db: Session = Depends(get_db)):
 
     account = Account(
         redeem_key=req.key,
+        shop=req.shop,
         account_type=info["account_type"],
         email=info["email"],
         password=info["password"],
@@ -137,15 +149,21 @@ def delete_account(account_id: int, db: Session = Depends(get_db)):
 
 
 @app.get("/api/stats", response_model=StatsOut)
-def get_stats(db: Session = Depends(get_db)):
-    all_accounts = db.query(Account).all()
+def get_stats(
+    shop: Optional[str] = Query(None),
+    db: Session = Depends(get_db),
+):
+    q = db.query(Account)
+    if shop:
+        q = q.filter(Account.shop == shop)
+    all_accounts = q.all()
     return StatsOut(
         total=len(all_accounts),
         team=sum(1 for a in all_accounts if a.account_type == "Team"),
         plus=sum(1 for a in all_accounts if a.account_type == "Plus"),
         available=sum(1 for a in all_accounts if a.status == "available"),
-        assigned=sum(1 for a in all_accounts if a.status == "assigned"),
-        expired=sum(1 for a in all_accounts if a.status == "expired"),
+        archived=sum(1 for a in all_accounts if a.status == "archived"),
+        shop=shop,
     )
 
 

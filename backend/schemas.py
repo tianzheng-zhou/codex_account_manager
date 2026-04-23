@@ -5,6 +5,7 @@ from datetime import datetime
 
 class AccountBase(BaseModel):
     redeem_key: str
+    shop: str = "gpt-cw"
     account_type: str = "Team"
     email: str
     password: str
@@ -19,6 +20,7 @@ class AccountCreate(AccountBase):
 
 
 class AccountUpdate(BaseModel):
+    shop: Optional[str] = None
     account_type: Optional[str] = None
     email: Optional[str] = None
     password: Optional[str] = None
@@ -38,6 +40,7 @@ class AccountOut(AccountBase):
 
 class RedeemRequest(BaseModel):
     key: str
+    shop: str = "gpt-cw"
 
 
 class StatsOut(BaseModel):
@@ -45,8 +48,8 @@ class StatsOut(BaseModel):
     team: int
     plus: int
     available: int
-    assigned: int
-    expired: int
+    archived: int
+    shop: Optional[str] = None
 
 
 class FetchCodeResponse(BaseModel):

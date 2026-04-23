@@ -10,72 +10,113 @@
 </head>
 <body data-ds>
 
-  <!-- Header -->
-  <header class="app-header">
-    <div class="header-inner">
-      <div class="brand">
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="32" height="32">
-          <circle cx="32" cy="32" r="30" fill="#C96442"/>
-          <text x="32" y="44" text-anchor="middle" font-family="Literata, Georgia, serif" font-size="38" font-weight="400" fill="#FAFAF7" letter-spacing="-0.02em">C</text>
-        </svg>
-        <h1 class="brand-title">Codex 账号管理</h1>
-      </div>
-    </div>
-  </header>
-
-  <main class="app-main">
-    <!-- Stats -->
-    <section class="stats-row" id="statsRow"></section>
-
-    <!-- Redeem Section -->
-    <section class="redeem-section">
-      <div class="redeem-card">
-        <h2 class="ds-h3">一键兑换</h2>
-        <p class="ds-small">输入兑换密钥，自动获取账号信息并录入系统</p>
-        <div class="redeem-form">
-          <input type="text" id="redeemKeyInput" class="input" placeholder="TEAM-XXXXXXXX 或 PLUS-XXXXXXXX">
-          <button class="btn btn-primary" id="redeemBtn" onclick="handleRedeem()">
-            <i data-lucide="key-round"></i>
-            兑换
+  <div class="app-layout">
+    <!-- Sidebar -->
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-top">
+        <div class="sidebar-brand">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="28" height="28" class="brand-logo">
+            <circle cx="32" cy="32" r="30" fill="#C96442"/>
+            <text x="32" y="44" text-anchor="middle" font-family="Literata, Georgia, serif" font-size="38" font-weight="400" fill="#FAFAF7" letter-spacing="-0.02em">C</text>
+          </svg>
+          <span class="sidebar-brand-text">Codex</span>
+        </div>
+        <nav class="sidebar-nav">
+          <button class="nav-item active" data-view="dashboard" onclick="switchView('dashboard')">
+            <i data-lucide="layout-dashboard"></i>
+            <span class="nav-label">Dashboard</span>
           </button>
-        </div>
-        <div id="redeemMsg" class="redeem-msg" style="display:none;"></div>
+          <div class="nav-divider"></div>
+          <div class="nav-section-title"><span>店铺</span></div>
+          <button class="nav-item" data-view="shop:gpt-cw" onclick="switchView('shop:gpt-cw')">
+            <i data-lucide="store"></i>
+            <span class="nav-label">GPT专卖-cw</span>
+          </button>
+        </nav>
       </div>
-    </section>
+      <div class="sidebar-bottom">
+        <button class="nav-item sidebar-toggle" onclick="toggleSidebar()">
+          <i data-lucide="panel-left-close" id="toggleIcon"></i>
+          <span class="nav-label">收起</span>
+        </button>
+      </div>
+    </aside>
 
-    <!-- Toolbar -->
-    <section class="toolbar">
-      <div class="toolbar-left">
-        <div class="search-box">
-          <i data-lucide="search"></i>
-          <input type="text" id="searchInput" class="input input-search" placeholder="搜索邮箱、密钥、备注…" oninput="debounceLoad()">
+    <!-- Content Area -->
+    <main class="content-area" id="contentArea">
+      <!-- Dashboard View -->
+      <div class="view" id="viewDashboard">
+        <div class="view-header">
+          <h1 class="view-title">Dashboard</h1>
+          <p class="view-subtitle">全局账号统计总览</p>
         </div>
-        <select id="typeFilter" class="input input-select" onchange="loadAccounts()">
-          <option value="">全部类型</option>
-          <option value="Team">Team</option>
-          <option value="Plus">Plus</option>
-        </select>
-        <select id="statusFilter" class="input input-select" onchange="loadAccounts()">
-          <option value="">全部状态</option>
-          <option value="available">可用</option>
-          <option value="assigned">已分配</option>
-          <option value="expired">已过期</option>
-        </select>
+        <section class="stats-row" id="statsRow"></section>
       </div>
-      <button class="btn btn-outline" onclick="openAddModal()">
-        <i data-lucide="plus"></i>
-        手动添加
-      </button>
-    </section>
 
-    <!-- Account List -->
-    <section class="account-list" id="accountList">
-      <div class="empty-state" id="emptyState">
-        <i data-lucide="inbox" class="empty-icon"></i>
-        <p>暂无账号。输入密钥兑换或手动添加。</p>
+      <!-- Shop View: gpt-cw -->
+      <div class="view" id="viewShopGptCw" style="display:none;">
+        <div class="view-header">
+          <div class="view-header-row">
+            <div>
+              <h1 class="view-title">GPT专卖-cw</h1>
+              <p class="view-subtitle">chongzhi.art 密钥兑换 · 自动接码</p>
+            </div>
+            <a href="https://caowo.store/" target="_blank" rel="noopener" class="btn btn-outline btn-sm shop-link">
+              <i data-lucide="external-link"></i>
+              商店
+            </a>
+          </div>
+        </div>
+
+        <section class="stats-row" id="shopStatsRow"></section>
+
+        <section class="redeem-section">
+          <div class="redeem-card">
+            <h2 class="ds-h3">一键兑换</h2>
+            <p class="ds-small">输入兑换密钥，自动获取账号信息并录入系统</p>
+            <div class="redeem-form">
+              <input type="text" id="redeemKeyInput" class="input" placeholder="TEAM-XXXXXXXX 或 PLUS-XXXXXXXX">
+              <button class="btn btn-primary" id="redeemBtn" onclick="handleRedeem()">
+                <i data-lucide="key-round"></i>
+                兑换
+              </button>
+            </div>
+            <div id="redeemMsg" class="redeem-msg" style="display:none;"></div>
+          </div>
+        </section>
+
+        <section class="toolbar">
+          <div class="toolbar-left">
+            <div class="search-box">
+              <i data-lucide="search"></i>
+              <input type="text" id="searchInput" class="input input-search" placeholder="搜索邮箱、密钥、备注…" oninput="debounceLoad()">
+            </div>
+            <select id="typeFilter" class="input input-select" onchange="loadAccounts()">
+              <option value="">全部类型</option>
+              <option value="Team">Team</option>
+              <option value="Plus">Plus</option>
+            </select>
+            <select id="statusFilter" class="input input-select" onchange="loadAccounts()">
+              <option value="">全部状态</option>
+              <option value="available">可用</option>
+              <option value="archived">已归档</option>
+            </select>
+          </div>
+          <button class="btn btn-outline" onclick="openAddModal()">
+            <i data-lucide="plus"></i>
+            手动添加
+          </button>
+        </section>
+
+        <section class="account-list" id="accountList">
+          <div class="empty-state" id="emptyState">
+            <i data-lucide="inbox" class="empty-icon"></i>
+            <p>暂无账号。输入密钥兑换或手动添加。</p>
+          </div>
+        </section>
       </div>
-    </section>
-  </main>
+    </main>
+  </div>
 
   <!-- Add/Edit Modal -->
   <div class="modal-overlay" id="modalOverlay" style="display:none;" onclick="closeModal(event)">
@@ -107,8 +148,7 @@
         <label class="form-label">状态
           <select id="fStatus" class="input input-select">
             <option value="available">可用</option>
-            <option value="assigned">已分配</option>
-            <option value="expired">已过期</option>
+            <option value="archived">已归档</option>
           </select>
         </label>
         <label class="form-label">备注

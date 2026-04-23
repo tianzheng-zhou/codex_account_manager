@@ -8,6 +8,7 @@ class Account(Base):
 
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     redeem_key = Column(String, unique=True, index=True, nullable=False)
+    shop = Column(String, nullable=False, default="gpt-cw", index=True)
     account_type = Column(String, nullable=False, default="Team")
     email = Column(String, nullable=False)
     password = Column(String, nullable=False)
