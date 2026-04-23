@@ -285,7 +285,7 @@ html, body {
   max-width: 360px;
 }
 
-.search-box > i {
+.search-box > svg {
   position: absolute;
   left: 10px;
   top: 50%;

@@ -3,6 +3,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from typing import Optional
+from datetime import datetime
 import os
 
 from database import engine, get_db, Base
@@ -84,13 +85,22 @@ async def redeem_account(req: RedeemRequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail=result.get("error", "兑换失败"))
 
     info = result["data"]
+    key_upper = req.key.upper()
+    if "account_type" not in info:
+        if key_upper.startswith("PLUS"):
+            info["account_type"] = "Plus"
+        elif key_upper.startswith("TEAM"):
+            info["account_type"] = "Team"
+        else:
+            info["account_type"] = "Team"
+
     account = Account(
         redeem_key=req.key,
-        account_type=info.get("account_type", "Team"),
+        account_type=info["account_type"],
         email=info["email"],
         password=info["password"],
         code_url=info.get("code_url"),
-        redeemed_at=info.get("redeemed_at"),
+        redeemed_at=info.get("redeemed_at") or datetime.now().strftime("%Y-%m-%d %H:%M"),
         status="available",
     )
     db.add(account)
