@@ -343,15 +343,28 @@ function copyText(text, btnEl) {
     showToast('已复制', 'success');
   };
 
-  navigator.clipboard.writeText(text).then(doCopy).catch(() => {
-    const ta = document.createElement('textarea');
-    ta.value = text;
-    document.body.appendChild(ta);
-    ta.select();
-    document.execCommand('copy');
-    document.body.removeChild(ta);
-    doCopy();
-  });
+  const fallbackCopy = () => {
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.focus();
+      ta.select();
+      document.execCommand('copy');
+      document.body.removeChild(ta);
+      doCopy();
+    } catch (e) {
+      showToast('复制失败，请手动复制', 'error');
+    }
+  };
+
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(doCopy).catch(fallbackCopy);
+  } else {
+    fallbackCopy();
+  }
 }
 
 // ---- Stats ----

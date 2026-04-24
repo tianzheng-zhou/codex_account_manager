@@ -12,7 +12,7 @@ if not exist venv (
 
 echo.
 echo  Codex 账号管理系统
-echo  http://127.0.0.1:25487
+echo  http://0.0.0.0:25487
 echo.
 
 .\venv\Scripts\python.exe backend\main.py
