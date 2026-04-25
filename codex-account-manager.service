@@ -7,8 +7,8 @@ Type=simple
 User=ztz
 WorkingDirectory=/home/ztz/projects/codex_account_manager
 ExecStart=/home/ztz/projects/codex_account_manager/venv/bin/python backend/main.py
-Environment=HTTP_PROXY=http://127.0.0.1:7897
-Environment=HTTPS_PROXY=http://127.0.0.1:7897
+Environment=HTTP_PROXY=http://127.0.0.1:7890
+Environment=HTTPS_PROXY=http://127.0.0.1:7890
 Restart=on-failure
 RestartSec=5
 
