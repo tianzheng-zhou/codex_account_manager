@@ -83,6 +83,11 @@
             <span class="nav-label">Dashboard</span>
           </button>
           <div class="nav-divider"></div>
+          <button class="nav-item" data-view="shop:self" onclick="switchView('shop:self')">
+            <i data-lucide="user-check"></i>
+            <span class="nav-label">自有账号</span>
+          </button>
+          <div class="nav-divider"></div>
           <div class="nav-section-title"><span>店铺</span></div>
           <button class="nav-item" data-view="shop:gpt-cw" onclick="switchView('shop:gpt-cw')">
             <i data-lucide="store"></i>
@@ -138,24 +143,24 @@
         <section class="stats-row" id="statsRow"></section>
       </div>
 
-      <!-- Shop View: gpt-cw -->
+      <!-- Account Source View -->
       <div class="view" id="viewShopGptCw" style="display:none;">
         <div class="view-header">
           <div class="view-header-row">
             <div>
-              <h1 class="view-title">GPT专卖-cw</h1>
-              <p class="view-subtitle">chongzhi.art 密钥兑换 · 自动接码</p>
+              <h1 class="view-title" id="accountViewTitle">GPT专卖-cw</h1>
+              <p class="view-subtitle" id="accountViewSubtitle">chongzhi.art 密钥兑换 · 自动接码</p>
             </div>
-            <a href="https://caowo.store/" target="_blank" rel="noopener" class="btn btn-outline btn-sm shop-link">
+            <a href="https://caowo.store/" target="_blank" rel="noopener" class="btn btn-outline btn-sm shop-link" id="accountSourceAction">
               <i data-lucide="external-link"></i>
-              商店
+              <span id="accountSourceActionLabel">商店</span>
             </a>
           </div>
         </div>
 
         <section class="stats-row" id="shopStatsRow"></section>
 
-        <section class="redeem-section">
+        <section class="redeem-section" id="redeemSection">
           <div class="redeem-card">
             <h2 class="ds-h3">一键兑换</h2>
             <p class="ds-small">输入兑换密钥，自动获取账号信息并录入系统</p>
@@ -181,6 +186,13 @@
               <option value="Team">Team</option>
               <option value="Plus">Plus</option>
             </select>
+            <select id="teamRoleFilter" class="input input-select" onchange="loadAccounts()" style="display:none;">
+              <option value="">全部形态</option>
+              <option value="plus">Plus</option>
+              <option value="parent">Team 母号</option>
+              <option value="child">Team 子号</option>
+              <option value="child_unbound">未绑定子号</option>
+            </select>
             <select id="statusFilter" class="input input-select" onchange="loadAccounts()">
               <option value="">全部状态</option>
               <option value="available">可用</option>
@@ -193,10 +205,16 @@
               <option value="orphan" data-admin-only>无主（管理员）</option>
             </select>
           </div>
-          <button class="btn btn-outline" onclick="openAddModal()">
-            <i data-lucide="plus"></i>
-            手动添加
-          </button>
+          <div class="toolbar-actions">
+            <button class="btn btn-outline" id="quickImportBtn" onclick="openImportModal()" style="display:none;">
+              <i data-lucide="upload"></i>
+              快速导入
+            </button>
+            <button class="btn btn-outline" onclick="openAddModal()">
+              <i data-lucide="plus"></i>
+              <span id="addAccountBtnLabel">手动添加</span>
+            </button>
+          </div>
         </section>
 
         <section class="account-list" id="accountList">
@@ -244,36 +262,103 @@
       </div>
       <form id="accountForm" onsubmit="handleFormSubmit(event)">
         <input type="hidden" id="editId" value="">
-        <label class="form-label">兑换密钥
+        <label class="form-label" id="redeemKeyRow"><span id="redeemKeyLabelText">兑换密钥</span>
           <input type="text" id="fRedeemKey" class="input" placeholder="TEAM-XXXXXXXX" required>
         </label>
-        <label class="form-label">账号类型
+        <label class="form-label" id="accountTypeRow">账号类型
           <select id="fAccountType" class="input input-select">
             <option value="Team">Team</option>
             <option value="Plus">Plus</option>
           </select>
         </label>
-        <label class="form-label">邮箱
+        <label class="form-label" id="accountShapeRow" style="display:none;">账号形态
+          <select id="fAccountShape" class="input input-select" onchange="updateAccountShapeFields()">
+            <option value="team_parent">Team 母号</option>
+            <option value="team_child">Team 子号</option>
+            <option value="plus">Plus</option>
+          </select>
+        </label>
+        <label class="form-label" id="teamParentRow" style="display:none;">所属母号
+          <select id="fTeamParentId" class="input input-select">
+            <option value="">暂不绑定</option>
+          </select>
+        </label>
+        <label class="form-label" id="emailRow">邮箱
           <input type="text" id="fEmail" class="input" placeholder="user@example.com" required>
         </label>
-        <label class="form-label">密码
+        <label class="form-label" id="passwordRow">密码
           <input type="text" id="fPassword" class="input" placeholder="密码" required>
         </label>
-        <label class="form-label">收码链接
+        <label class="form-label" id="codeUrlRow">收码链接
           <input type="text" id="fCodeUrl" class="input" placeholder="https://...">
         </label>
-        <label class="form-label">状态
+        <label class="form-label" id="accountProviderRow" style="display:none;">账号来源
+          <select id="fAccountProvider" class="input input-select" onchange="updateAccountProviderFields(true)">
+            <option value="">常规</option>
+            <option value="google">Google</option>
+            <option value="outlook">Outlook</option>
+          </select>
+        </label>
+        <label class="form-label" id="recoveryEmailRow" style="display:none;">辅助邮箱
+          <input type="text" id="fRecoveryEmail" class="input" placeholder="recovery@example.com">
+        </label>
+        <label class="form-label" id="loginMethodRow" style="display:none;">登录方式
+          <select id="fLoginMethod" class="input input-select">
+            <option value="">常规登录</option>
+            <option value="google_oauth">Google OAuth</option>
+            <option value="password">密码登录</option>
+          </select>
+        </label>
+        <label class="form-label" id="mailAuthCodeRow" style="display:none;">授权码
+          <input type="text" id="fMailAuthCode" class="input" placeholder="OAuth client_id / 授权码">
+        </label>
+        <label class="form-label" id="mailTokenRow" style="display:none;">令牌
+          <textarea id="fMailToken" class="input token-textarea" placeholder="refresh_token / 令牌"></textarea>
+        </label>
+        <label class="form-label" id="statusRow">状态
           <select id="fStatus" class="input input-select">
             <option value="available">可用</option>
             <option value="archived">已归档</option>
           </select>
         </label>
-        <label class="form-label">备注
+        <label class="form-label" id="remarkRow">备注
           <input type="text" id="fRemark" class="input" placeholder="可选备注">
         </label>
         <div class="modal-actions">
           <button type="button" class="btn btn-outline" onclick="closeModal()">取消</button>
           <button type="submit" class="btn btn-primary" id="formSubmitBtn">保存</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Quick Import Modal -->
+  <div class="modal-overlay" id="importOverlay" style="display:none;" onclick="closeImportModal(event)">
+    <div class="modal modal-wide" onclick="event.stopPropagation()">
+      <div class="modal-header">
+        <h3 class="ds-h3">快速导入自有账号</h3>
+        <button class="btn-icon" onclick="closeImportModal()"><i data-lucide="x"></i></button>
+      </div>
+      <form id="importForm" onsubmit="handleImportSubmit(event)">
+        <label class="form-label">账号形态
+          <select id="importAccountShape" class="input input-select" onchange="updateImportShapeFields()">
+            <option value="plus">Plus</option>
+            <option value="team_parent">Team 母号</option>
+            <option value="team_child">Team 子号</option>
+          </select>
+        </label>
+        <label class="form-label" id="importTeamParentRow" style="display:none;">所属母号
+          <select id="importTeamParentId" class="input input-select">
+            <option value="">暂不绑定</option>
+          </select>
+        </label>
+        <label class="form-label">导入内容
+          <textarea id="importRaw" class="input import-textarea" placeholder="Google：邮箱----密码----辅助邮箱&#10;maevegross@zzx.xintaitong.com----393lP5xOJX----u7xjaeddyz@126.com&#10;&#10;Outlook：邮箱----密码----授权码----令牌&#10;wenxiangbo758972@outlook.com----vwherio4983----9e5f94bc-e8a4-4e73-b8be-63364c29d753----M.C529_SN1.0.U..." required></textarea>
+        </label>
+        <div id="importResult" class="import-result" style="display:none;"></div>
+        <div class="modal-actions">
+          <button type="button" class="btn btn-outline" onclick="closeImportModal()">取消</button>
+          <button type="submit" class="btn btn-primary" id="importSubmitBtn">导入</button>
         </div>
       </form>
     </div>

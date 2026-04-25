@@ -8,8 +8,26 @@ let currentView = 'dashboard';
 let currentShop = null;
 let currentUser = null;
 
+const SELF_SHOP = 'self';
 const SHOP_VIEW_MAP = {
-  'shop:gpt-cw': { shop: 'gpt-cw', elId: 'viewShopGptCw' },
+  'shop:gpt-cw': {
+    shop: 'gpt-cw',
+    elId: 'viewShopGptCw',
+    title: 'GPT专卖-cw',
+    subtitle: 'chongzhi.art 密钥兑换 · 自动接码',
+    actionHref: 'https://caowo.store/',
+    actionLabel: '商店',
+    showRedeem: true,
+  },
+  'shop:self': {
+    shop: SELF_SHOP,
+    elId: 'viewShopGptCw',
+    title: '自有账号',
+    subtitle: '手动录入 Plus、Team 母号和 Team 子号',
+    actionHref: null,
+    actionLabel: '',
+    showRedeem: false,
+  },
 };
 
 // ---- Auth helpers ----
@@ -286,30 +304,60 @@ function updateToggleIcon() {
 // ---- View Switching ----
 function switchView(view) {
   currentView = view;
+  const accountCfg = SHOP_VIEW_MAP[view] || null;
 
   document.querySelectorAll('.nav-item[data-view]').forEach(btn => {
     btn.classList.toggle('active', btn.dataset.view === view);
   });
 
   document.getElementById('viewDashboard').style.display = view === 'dashboard' ? 'block' : 'none';
-  Object.entries(SHOP_VIEW_MAP).forEach(([key, cfg]) => {
-    document.getElementById(cfg.elId).style.display = view === key ? 'block' : 'none';
-  });
+  document.getElementById('viewShopGptCw').style.display = accountCfg ? 'block' : 'none';
   document.getElementById('viewUsers').style.display = view === 'users' ? 'block' : 'none';
   document.getElementById('viewInvites').style.display = view === 'invites' ? 'block' : 'none';
 
   if (view === 'dashboard') {
     currentShop = null;
     loadStats();
-  } else if (SHOP_VIEW_MAP[view]) {
-    currentShop = SHOP_VIEW_MAP[view].shop;
+  } else if (accountCfg) {
+    currentShop = accountCfg.shop;
+    configureAccountSourceView(accountCfg);
     loadShopStats();
     loadAccounts();
   } else if (view === 'users') {
+    currentShop = null;
     loadUsers();
   } else if (view === 'invites') {
+    currentShop = null;
     loadInviteCodes();
   }
+}
+
+function isSelfAccountView() {
+  return currentShop === SELF_SHOP;
+}
+
+function configureAccountSourceView(cfg) {
+  document.getElementById('accountViewTitle').textContent = cfg.title;
+  document.getElementById('accountViewSubtitle').textContent = cfg.subtitle;
+
+  const action = document.getElementById('accountSourceAction');
+  const actionLabel = document.getElementById('accountSourceActionLabel');
+  if (cfg.actionHref) {
+    action.href = cfg.actionHref;
+    actionLabel.textContent = cfg.actionLabel;
+    action.style.display = '';
+  } else {
+    action.style.display = 'none';
+  }
+
+  document.getElementById('redeemSection').style.display = cfg.showRedeem ? '' : 'none';
+  document.getElementById('typeFilter').style.display = cfg.shop === SELF_SHOP ? 'none' : '';
+  document.getElementById('teamRoleFilter').style.display = cfg.shop === SELF_SHOP ? '' : 'none';
+  document.getElementById('quickImportBtn').style.display = cfg.shop === SELF_SHOP ? '' : 'none';
+  document.getElementById('addAccountBtnLabel').textContent = cfg.shop === SELF_SHOP ? '添加自有账号' : '手动添加';
+  document.getElementById('searchInput').placeholder = cfg.shop === SELF_SHOP
+    ? '搜索邮箱、账号标识、备注…'
+    : '搜索邮箱、密钥、备注…';
 }
 
 // ---- Toast ----
@@ -410,19 +458,25 @@ function debounceLoad() {
 async function loadAccounts() {
   const searchEl = document.getElementById('searchInput');
   const typeEl = document.getElementById('typeFilter');
+  const teamRoleEl = document.getElementById('teamRoleFilter');
   const statusEl = document.getElementById('statusFilter');
   const scopeEl = document.getElementById('scopeFilter');
   if (!searchEl || !typeEl || !statusEl) return;
 
   const search = searchEl.value.trim();
   const type = typeEl.value;
+  const teamRole = teamRoleEl ? teamRoleEl.value : '';
   const status = statusEl.value;
   const scope = scopeEl ? scopeEl.value : '';
 
   const params = new URLSearchParams();
   if (currentShop) params.set('shop', currentShop);
   if (search) params.set('search', search);
-  if (type) params.set('account_type', type);
+  if (currentShop === SELF_SHOP) {
+    if (teamRole) params.set('team_role_filter', teamRole);
+  } else if (type) {
+    params.set('account_type', type);
+  }
   if (status) params.set('status', status);
   if (scope) params.set('scope', scope);
 
@@ -456,21 +510,33 @@ function renderAccounts(accounts) {
     const canEdit = relation === 'owner' || relation === 'admin' || relation === 'orphan';
     const canShare = canEdit; // owner or admin
     const canDelete = isAdmin;
-    const safeType = escapeHtml(a.account_type);
+    const safeType = escapeHtml(accountShapeLabel(a));
+    const typeClass = accountShapeClass(a);
+    const identifierText = accountIdentifierText(a);
     const statusKey = escapeAttr(a.status);
     const safeUrlForHref = safeUrl(a.code_url);
     const shortUrl = safeUrlForHref ? escapeHtml(truncate(safeUrlForHref, 40)) : '';
+    const codeUrlOptional = a.login_method === 'google_oauth' || a.account_provider === 'outlook';
+    const showCodeUrlField = safeUrlForHref || a.code_url || !codeUrlOptional;
+    const providerLabel = accountProviderLabel(a.account_provider);
+    const loginLabel = loginMethodLabel(a.login_method);
+    const canFetchCode = safeUrlForHref || a.account_provider === 'outlook' || (a.mail_auth_code && a.mail_token);
     const relLabel = relationLabel(relation);
+    const parentInfo = a.shop === SELF_SHOP && a.team_role === 'child'
+      ? (a.team_parent_label || '未绑定')
+      : null;
 
     return `
     <div class="account-card" data-id="${a.id}">
       <div class="card-top">
         <div class="card-badges">
-          <span class="badge badge-${escapeAttr(a.account_type.toLowerCase())}">${safeType}</span>
+          <span class="badge badge-${escapeAttr(typeClass)}">${safeType}</span>
           <span class="badge badge-${statusKey}">${escapeHtml(statusLabel(a.status))}</span>
+          ${providerLabel ? `<span class="badge badge-provider">${escapeHtml(providerLabel)}</span>` : ''}
+          ${loginLabel ? `<span class="badge badge-login">${escapeHtml(loginLabel)}</span>` : ''}
           ${relLabel ? `<span class="badge badge-rel-${escapeAttr(relation)}">${escapeHtml(relLabel)}</span>` : ''}
           ${a.owner_username && relation !== 'owner' ? `<span class="ds-meta">拥有者：${escapeHtml(a.owner_username)}</span>` : ''}
-          <span class="ds-meta" style="margin-left:var(--space-2);">${escapeHtml(a.redeem_key)}</span>
+          ${identifierText ? `<span class="ds-meta" style="margin-left:var(--space-2);">${escapeHtml(identifierText)}</span>` : ''}
         </div>
         <div class="card-actions">
           ${canEdit ? `<button class="btn-icon" title="编辑" data-action="edit" data-id="${a.id}">
@@ -502,6 +568,15 @@ function renderAccounts(accounts) {
             <button class="copy-btn" data-action="copy" data-value="${escapeAttr(a.password)}"><i data-lucide="copy"></i></button>
           </span>
         </div>
+        ${a.recovery_email ? `
+        <div class="field">
+          <span class="field-label">辅助邮箱</span>
+          <span class="field-value">
+            <span>${escapeHtml(a.recovery_email)}</span>
+            <button class="copy-btn" data-action="copy" data-value="${escapeAttr(a.recovery_email)}"><i data-lucide="copy"></i></button>
+          </span>
+        </div>` : ''}
+        ${showCodeUrlField ? `
         <div class="field">
           <span class="field-label">收码链接</span>
           <span class="field-value">
@@ -511,14 +586,19 @@ function renderAccounts(accounts) {
               : (a.code_url ? `<span style="color:var(--color-danger)">(无效链接)</span>` : '<span style="color:var(--fg-3)">—</span>')
             }
           </span>
-        </div>
+        </div>` : ''}
+        ${parentInfo !== null ? `
+        <div class="field">
+          <span class="field-label">所属母号</span>
+          <span class="field-value">${escapeHtml(parentInfo)}</span>
+        </div>` : ''}
       </div>
       <div class="card-bottom">
         <div>
           <span class="card-meta">${a.redeemed_at ? '兑换于 ' + escapeHtml(a.redeemed_at) : ''}</span>
           ${a.remark ? `<span class="card-remark" style="margin-left:var(--space-3);">${escapeHtml(a.remark)}</span>` : ''}
         </div>
-        ${safeUrlForHref ? `
+        ${canFetchCode ? `
           <button class="btn btn-ghost btn-sm fetch-code-btn" data-action="fetch-code" data-id="${a.id}">
             <i data-lucide="mail-check"></i>
             获取验证码
@@ -537,6 +617,38 @@ function relationLabel(rel) {
   return map[rel] || '';
 }
 
+function accountShapeLabel(account) {
+  if (account.shop === SELF_SHOP) {
+    if (account.account_type === 'Plus') return 'Plus';
+    if (account.team_role === 'child') return 'Team 子号';
+    return 'Team 母号';
+  }
+  return account.account_type;
+}
+
+function accountShapeClass(account) {
+  if (account.shop === SELF_SHOP && account.account_type === 'Team') {
+    return account.team_role === 'child' ? 'team-child' : 'team-parent';
+  }
+  return String(account.account_type || '').toLowerCase();
+}
+
+function accountIdentifierText(account) {
+  const key = account.redeem_key || '';
+  if (account.shop === SELF_SHOP && key.startsWith('SELF-')) return '';
+  return key;
+}
+
+function accountProviderLabel(provider) {
+  const map = { google: 'Google', outlook: 'Outlook' };
+  return map[provider] || '';
+}
+
+function loginMethodLabel(method) {
+  const map = { google_oauth: 'Google OAuth', password: '密码登录' };
+  return map[method] || '';
+}
+
 function effectiveIsAdmin() {
   // Admin unless privacy toggle is on
   return currentUser && currentUser.role === 'admin' && !isAdminPrivacyMode();
@@ -551,7 +663,7 @@ function createEmptyState() {
   div.className = 'empty-state';
   div.innerHTML = `
     <i data-lucide="inbox" class="empty-icon"></i>
-    <p>暂无账号。输入密钥兑换或手动添加。</p>
+    <p>${isSelfAccountView() ? '暂无自有账号。点击上方按钮添加。' : '暂无账号。输入密钥兑换或手动添加。'}</p>
   `;
   return div;
 }
@@ -642,32 +754,148 @@ async function handleRedeem() {
 }
 
 // ---- Add / Edit Modal ----
-function openAddModal() {
+function placeAccountIdentifierRow(isSelf) {
+  const form = document.getElementById('accountForm');
+  const row = document.getElementById('redeemKeyRow');
+  if (isSelf) {
+    form.insertBefore(row, form.querySelector('.modal-actions'));
+  } else {
+    form.insertBefore(row, document.getElementById('accountTypeRow'));
+  }
+}
+
+function configureAccountModalForSource(sourceShop, account = null) {
+  const isSelf = sourceShop === SELF_SHOP;
+  const redeemInput = document.getElementById('fRedeemKey');
+
+  document.getElementById('accountForm').dataset.sourceShop = sourceShop;
+  placeAccountIdentifierRow(isSelf);
+  document.getElementById('redeemKeyLabelText').textContent = isSelf ? '账号标识（可选）' : '兑换密钥';
+  redeemInput.placeholder = isSelf ? '留空则自动生成内部标识' : 'TEAM-XXXXXXXX';
+  redeemInput.required = !isSelf;
+  document.getElementById('accountTypeRow').style.display = isSelf ? 'none' : '';
+  document.getElementById('accountShapeRow').style.display = isSelf ? '' : 'none';
+  document.getElementById('accountProviderRow').style.display = isSelf ? '' : 'none';
+  document.getElementById('loginMethodRow').style.display = isSelf ? '' : 'none';
+
+  if (isSelf) {
+    if (account) {
+      if (account.account_type === 'Plus') {
+        document.getElementById('fAccountShape').value = 'plus';
+      } else {
+        document.getElementById('fAccountShape').value = account.team_role === 'child' ? 'team_child' : 'team_parent';
+      }
+    } else {
+      document.getElementById('fAccountShape').value = 'team_parent';
+    }
+  } else {
+    document.getElementById('fAccountType').value = account ? account.account_type : 'Team';
+  }
+
+  updateAccountShapeFields();
+  updateAccountProviderFields(false);
+}
+
+function updateAccountProviderFields(applyDefaults = false) {
+  const isSelf = document.getElementById('accountForm').dataset.sourceShop === SELF_SHOP;
+  const provider = document.getElementById('fAccountProvider').value;
+  const loginMethodEl = document.getElementById('fLoginMethod');
+  const showGoogle = isSelf && provider === 'google';
+  const showOutlook = isSelf && provider === 'outlook';
+
+  document.getElementById('recoveryEmailRow').style.display = showGoogle ? '' : 'none';
+  document.getElementById('mailAuthCodeRow').style.display = showOutlook ? '' : 'none';
+  document.getElementById('mailTokenRow').style.display = showOutlook ? '' : 'none';
+
+  if (!isSelf) {
+    loginMethodEl.value = '';
+    return;
+  }
+  if (applyDefaults) {
+    if (provider === 'google') loginMethodEl.value = 'google_oauth';
+    else if (provider === 'outlook') loginMethodEl.value = 'password';
+    else loginMethodEl.value = '';
+  }
+}
+
+function updateAccountShapeFields() {
+  const isSelf = isSelfAccountView() || document.getElementById('accountShapeRow').style.display !== 'none';
+  const shape = document.getElementById('fAccountShape').value;
+  document.getElementById('teamParentRow').style.display = isSelf && shape === 'team_child' ? '' : 'none';
+}
+
+async function loadTeamParentOptions(selectedId = null, excludeId = null, selectedLabel = '', selectId = 'fTeamParentId') {
+  const select = document.getElementById(selectId);
+  select.innerHTML = '<option value="">暂不绑定</option>';
+
+  const params = new URLSearchParams();
+  if (excludeId) params.set('exclude_id', String(excludeId));
+
+  try {
+    const resp = await authFetch(`${API}/accounts/team-parents?${params}`);
+    if (!resp.ok) return;
+    const parents = await resp.json();
+    const hasSelected = selectedId && parents.some(p => p.id === selectedId);
+
+    select.innerHTML += parents.map(p => {
+      const owner = p.owner_username ? ` · ${p.owner_username}` : '';
+      const remark = p.remark ? ` · ${p.remark}` : '';
+      return `<option value="${p.id}">${escapeHtml(p.email + owner + remark)}</option>`;
+    }).join('');
+
+    if (selectedId && !hasSelected) {
+      const label = selectedLabel || `当前母号 #${selectedId}`;
+      select.innerHTML += `<option value="${selectedId}">${escapeHtml(label)}</option>`;
+    }
+    select.value = selectedId ? String(selectedId) : '';
+  } catch {
+    showToast('母号列表加载失败', 'error');
+  }
+}
+
+async function openAddModal() {
   document.getElementById('modalTitle').textContent = '添加账号';
   document.getElementById('editId').value = '';
   document.getElementById('fRedeemKey').value = '';
   document.getElementById('fRedeemKey').disabled = false;
-  document.getElementById('fAccountType').value = 'Team';
   document.getElementById('fEmail').value = '';
   document.getElementById('fPassword').value = '';
+  document.getElementById('fAccountProvider').value = '';
+  document.getElementById('fRecoveryEmail').value = '';
+  document.getElementById('fLoginMethod').value = '';
+  document.getElementById('fMailAuthCode').value = '';
+  document.getElementById('fMailToken').value = '';
   document.getElementById('fCodeUrl').value = '';
   document.getElementById('fStatus').value = 'available';
   document.getElementById('fRemark').value = '';
+  configureAccountModalForSource(currentShop || 'gpt-cw');
+  if (isSelfAccountView()) await loadTeamParentOptions();
   document.getElementById('formSubmitBtn').textContent = '保存';
   document.getElementById('modalOverlay').style.display = 'flex';
 }
 
-function openEditModal(account) {
+async function openEditModal(account) {
   document.getElementById('modalTitle').textContent = '编辑账号';
   document.getElementById('editId').value = account.id;
-  document.getElementById('fRedeemKey').value = account.redeem_key;
+  document.getElementById('fRedeemKey').value = accountIdentifierText(account);
   document.getElementById('fRedeemKey').disabled = true;
-  document.getElementById('fAccountType').value = account.account_type;
   document.getElementById('fEmail').value = account.email;
   document.getElementById('fPassword').value = account.password;
+  document.getElementById('fAccountProvider').value = account.account_provider
+    || (account.login_method === 'google_oauth' ? 'google' : '')
+    || ((account.mail_auth_code || account.mail_token) ? 'outlook' : '');
+  document.getElementById('fRecoveryEmail').value = account.recovery_email || '';
+  document.getElementById('fLoginMethod').value = account.login_method || '';
+  document.getElementById('fMailAuthCode').value = account.mail_auth_code || '';
+  document.getElementById('fMailToken').value = account.mail_token || '';
   document.getElementById('fCodeUrl').value = account.code_url || '';
   document.getElementById('fStatus').value = account.status;
   document.getElementById('fRemark').value = account.remark || '';
+  configureAccountModalForSource(account.shop, account);
+  if (account.shop === SELF_SHOP) {
+    await loadTeamParentOptions(account.team_parent_id, account.id, account.team_parent_label || '');
+  }
+  updateAccountShapeFields();
   document.getElementById('formSubmitBtn').textContent = '更新';
   document.getElementById('modalOverlay').style.display = 'flex';
 }
@@ -677,20 +905,62 @@ function closeModal(e) {
   document.getElementById('modalOverlay').style.display = 'none';
 }
 
+function getSelfShapePayload() {
+  const shape = document.getElementById('fAccountShape').value;
+  if (shape === 'plus') {
+    return { account_type: 'Plus', team_role: null, team_parent_id: null };
+  }
+  if (shape === 'team_child') {
+    const parentId = document.getElementById('fTeamParentId').value;
+    return {
+      account_type: 'Team',
+      team_role: 'child',
+      team_parent_id: parentId ? Number(parentId) : null,
+    };
+  }
+  return { account_type: 'Team', team_role: 'parent', team_parent_id: null };
+}
+
+function getSelfMetadataPayload() {
+  const provider = document.getElementById('fAccountProvider').value || null;
+  let loginMethod = document.getElementById('fLoginMethod').value || null;
+  if (provider === 'google') loginMethod = 'google_oauth';
+  if (provider === 'outlook') loginMethod = 'password';
+
+  return {
+    recovery_email: provider === 'google'
+      ? (document.getElementById('fRecoveryEmail').value.trim() || null)
+      : null,
+    mail_auth_code: provider === 'outlook'
+      ? (document.getElementById('fMailAuthCode').value.trim() || null)
+      : null,
+    mail_token: provider === 'outlook'
+      ? (document.getElementById('fMailToken').value.trim() || null)
+      : null,
+    login_method: loginMethod,
+    account_provider: provider,
+  };
+}
+
 async function handleFormSubmit(e) {
   e.preventDefault();
   const editId = document.getElementById('editId').value;
   const isEdit = !!editId;
+  const sourceShop = document.getElementById('accountForm').dataset.sourceShop || currentShop || 'gpt-cw';
+  const isSelf = sourceShop === SELF_SHOP;
 
   if (isEdit) {
     const body = {
-      account_type: document.getElementById('fAccountType').value,
       email: document.getElementById('fEmail').value,
       password: document.getElementById('fPassword').value,
       code_url: document.getElementById('fCodeUrl').value || null,
       status: document.getElementById('fStatus').value,
       remark: document.getElementById('fRemark').value || null,
     };
+    Object.assign(body, isSelf ? getSelfShapePayload() : {
+      account_type: document.getElementById('fAccountType').value,
+    });
+    if (isSelf) Object.assign(body, getSelfMetadataPayload());
 
     try {
       const resp = await authFetch(`${API}/accounts/${editId}`, {
@@ -710,15 +980,18 @@ async function handleFormSubmit(e) {
     } catch { showToast('网络错误', 'error'); }
   } else {
     const body = {
-      redeem_key: document.getElementById('fRedeemKey').value,
-      shop: currentShop || 'gpt-cw',
-      account_type: document.getElementById('fAccountType').value,
+      redeem_key: document.getElementById('fRedeemKey').value.trim() || null,
+      shop: sourceShop,
       email: document.getElementById('fEmail').value,
       password: document.getElementById('fPassword').value,
       code_url: document.getElementById('fCodeUrl').value || null,
       status: document.getElementById('fStatus').value,
       remark: document.getElementById('fRemark').value || null,
     };
+    Object.assign(body, isSelf ? getSelfShapePayload() : {
+      account_type: document.getElementById('fAccountType').value,
+    });
+    if (isSelf) Object.assign(body, getSelfMetadataPayload());
 
     try {
       const resp = await authFetch(`${API}/accounts`, {
@@ -736,6 +1009,106 @@ async function handleFormSubmit(e) {
         showToast(data.detail || '添加失败', 'error');
       }
     } catch { showToast('网络错误', 'error'); }
+  }
+}
+
+// ---- Quick Import ----
+async function openImportModal() {
+  if (!isSelfAccountView()) return;
+  document.getElementById('importRaw').value = '';
+  document.getElementById('importAccountShape').value = 'plus';
+  document.getElementById('importResult').style.display = 'none';
+  document.getElementById('importResult').innerHTML = '';
+  updateImportShapeFields();
+  await loadTeamParentOptions(null, null, '', 'importTeamParentId');
+  document.getElementById('importOverlay').style.display = 'flex';
+}
+
+function closeImportModal(e) {
+  if (e && e.target !== e.currentTarget) return;
+  document.getElementById('importOverlay').style.display = 'none';
+}
+
+function updateImportShapeFields() {
+  const shape = document.getElementById('importAccountShape').value;
+  document.getElementById('importTeamParentRow').style.display = shape === 'team_child' ? '' : 'none';
+}
+
+function getImportShapePayload() {
+  const shape = document.getElementById('importAccountShape').value;
+  if (shape === 'team_parent') {
+    return { account_type: 'Team', team_role: 'parent', team_parent_id: null };
+  }
+  if (shape === 'team_child') {
+    const parentId = document.getElementById('importTeamParentId').value;
+    return {
+      account_type: 'Team',
+      team_role: 'child',
+      team_parent_id: parentId ? Number(parentId) : null,
+    };
+  }
+  return { account_type: 'Plus', team_role: null, team_parent_id: null };
+}
+
+function renderImportResult(data) {
+  const result = document.getElementById('importResult');
+  result.style.display = 'block';
+  const errorHtml = (data.errors || []).length
+    ? `<div class="import-errors">
+        ${(data.errors || []).map(err => `
+          <div class="import-error-row">
+            <strong>第 ${err.line} 行</strong>
+            <span>${escapeHtml(err.error)}</span>
+            <code>${escapeHtml(truncate(err.raw || '', 96))}</code>
+          </div>
+        `).join('')}
+      </div>`
+    : '';
+  result.className = `import-result ${data.failed ? 'has-errors' : 'success'}`;
+  result.innerHTML = `
+    <div class="import-summary">成功 ${data.created || 0} 条，失败 ${data.failed || 0} 条</div>
+    ${errorHtml}
+  `;
+}
+
+async function handleImportSubmit(e) {
+  e.preventDefault();
+  const rawText = document.getElementById('importRaw').value;
+  const btn = document.getElementById('importSubmitBtn');
+  if (!rawText.trim()) {
+    document.getElementById('importRaw').focus();
+    return;
+  }
+
+  const body = {
+    raw_text: rawText,
+    ...getImportShapePayload(),
+  };
+
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span> 导入中…';
+  try {
+    const resp = await authFetch(`${API}/accounts/import-self`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const data = await resp.json();
+    if (resp.ok) {
+      renderImportResult(data);
+      if (data.created) {
+        loadShopStats();
+        loadAccounts();
+        showToast(`已导入 ${data.created} 个账号`, 'success');
+      }
+    } else {
+      showToast(data.detail || '导入失败', 'error');
+    }
+  } catch {
+    showToast('网络错误', 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '导入';
   }
 }
 

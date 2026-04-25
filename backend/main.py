@@ -3,7 +3,7 @@ from fastapi import FastAPI, Depends, HTTPException, Query, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
-from sqlalchemy import or_
+from sqlalchemy import or_, select
 from typing import Optional, List
 from datetime import datetime
 import os
@@ -17,6 +17,9 @@ from schemas import (
     AccountOut,
     RedeemRequest,
     StatsOut,
+    TeamParentCandidate,
+    SelfImportRequest,
+    SelfImportResponse,
     FetchCodeResponse,
     RegisterRequest,
     LoginRequest,
@@ -30,7 +33,7 @@ from schemas import (
     ClaimRequest,
 )
 from scraper import redeem_key
-from mailbox import fetch_verification_code
+from mailbox import fetch_outlook_verification_code, fetch_verification_code
 from auth import (
     hash_password,
     verify_password,
@@ -46,6 +49,16 @@ from auth import (
     MIN_PASSWORD_LENGTH,
 )
 
+SELF_SHOP = "self"
+TEAM_ROLE_PARENT = "parent"
+TEAM_ROLE_CHILD = "child"
+ACCOUNT_TYPES = {"Team", "Plus"}
+ACCOUNT_STATUSES = {"available", "archived"}
+PROVIDER_GOOGLE = "google"
+PROVIDER_OUTLOOK = "outlook"
+LOGIN_METHOD_GOOGLE_OAUTH = "google_oauth"
+LOGIN_METHOD_PASSWORD = "password"
+
 Base.metadata.create_all(bind=engine)
 
 with engine.connect() as conn:
@@ -56,6 +69,27 @@ with engine.connect() as conn:
         conn.commit()
     if "created_by" not in columns:
         conn.execute(text("ALTER TABLE accounts ADD COLUMN created_by INTEGER REFERENCES users(id) ON DELETE SET NULL"))
+        conn.commit()
+    if "team_role" not in columns:
+        conn.execute(text("ALTER TABLE accounts ADD COLUMN team_role TEXT"))
+        conn.commit()
+    if "team_parent_id" not in columns:
+        conn.execute(text("ALTER TABLE accounts ADD COLUMN team_parent_id INTEGER REFERENCES accounts(id) ON DELETE SET NULL"))
+        conn.commit()
+    if "recovery_email" not in columns:
+        conn.execute(text("ALTER TABLE accounts ADD COLUMN recovery_email TEXT"))
+        conn.commit()
+    if "mail_auth_code" not in columns:
+        conn.execute(text("ALTER TABLE accounts ADD COLUMN mail_auth_code TEXT"))
+        conn.commit()
+    if "mail_token" not in columns:
+        conn.execute(text("ALTER TABLE accounts ADD COLUMN mail_token TEXT"))
+        conn.commit()
+    if "account_provider" not in columns:
+        conn.execute(text("ALTER TABLE accounts ADD COLUMN account_provider TEXT"))
+        conn.commit()
+    if "login_method" not in columns:
+        conn.execute(text("ALTER TABLE accounts ADD COLUMN login_method TEXT"))
         conn.commit()
 
 ensure_default_admin()
@@ -103,12 +137,175 @@ def _user_can_edit_account(account: Account, user: User, effective_role: str) ->
     return account.created_by == user.id
 
 
+def _strip_or_none(value: Optional[str]) -> Optional[str]:
+    if value is None:
+        return None
+    value = value.strip()
+    return value or None
+
+
+def _account_label(account: Account) -> str:
+    return account.email or account.redeem_key
+
+
+def _generate_self_redeem_key(db: Session) -> str:
+    for _ in range(20):
+        key = f"SELF-{secrets.token_hex(6).upper()}"
+        exists = db.query(Account).filter(Account.redeem_key == key).first()
+        if not exists:
+            return key
+    raise HTTPException(status_code=500, detail="无法生成唯一账号标识，请重试")
+
+
+def _ensure_unique_redeem_key(db: Session, redeem_key: str, account_id: Optional[int] = None):
+    q = db.query(Account).filter(Account.redeem_key == redeem_key)
+    if account_id is not None:
+        q = q.filter(Account.id != account_id)
+    if q.first():
+        raise HTTPException(status_code=400, detail="该账号标识已存在")
+
+
+def _self_email_exists(db: Session, email: str) -> bool:
+    return (
+        db.query(Account.id)
+        .filter(Account.shop == SELF_SHOP, Account.email.ilike(email))
+        .first()
+        is not None
+    )
+
+
+def _account_has_children(account_id: int, db: Session) -> bool:
+    return db.query(Account.id).filter(Account.team_parent_id == account_id).first() is not None
+
+
+def _validate_team_parent_id(
+    parent_id: Optional[int],
+    db: Session,
+    current_user: User,
+    effective_role: str,
+    account_id: Optional[int] = None,
+    require_edit_permission: bool = True,
+) -> Optional[int]:
+    if parent_id in (None, ""):
+        return None
+    try:
+        parent_id = int(parent_id)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="所属母号无效")
+    if account_id is not None and parent_id == account_id:
+        raise HTTPException(status_code=400, detail="子号不能绑定到自己")
+
+    parent = db.query(Account).filter(Account.id == parent_id).first()
+    if (
+        not parent
+        or parent.shop != SELF_SHOP
+        or parent.account_type != "Team"
+        or parent.team_role != TEAM_ROLE_PARENT
+    ):
+        raise HTTPException(status_code=400, detail="所属母号不存在或不是自有 Team 母号")
+    if require_edit_permission and not _user_can_edit_account(parent, current_user, effective_role):
+        raise HTTPException(status_code=403, detail="只能绑定到自己可编辑的母号")
+    return parent_id
+
+
+def _normalize_account_payload(
+    payload: dict,
+    db: Session,
+    current_user: User,
+    effective_role: str,
+    account: Optional[Account] = None,
+) -> dict:
+    for key in (
+        "redeem_key",
+        "shop",
+        "account_type",
+        "status",
+        "team_role",
+        "email",
+        "password",
+        "recovery_email",
+        "mail_auth_code",
+        "mail_token",
+        "account_provider",
+        "login_method",
+    ):
+        if key in payload and isinstance(payload[key], str):
+            payload[key] = payload[key].strip()
+    for key in ("recovery_email", "mail_auth_code", "mail_token", "account_provider", "login_method"):
+        if key in payload:
+            payload[key] = _strip_or_none(payload[key])
+
+    final_shop = payload.get("shop", account.shop if account else "gpt-cw") or "gpt-cw"
+    final_account_type = payload.get("account_type", account.account_type if account else "Team") or "Team"
+    final_status = payload.get("status", account.status if account else "available") or "available"
+
+    if final_account_type not in ACCOUNT_TYPES:
+        raise HTTPException(status_code=400, detail="账号类型无效")
+    if final_status not in ACCOUNT_STATUSES:
+        raise HTTPException(status_code=400, detail="账号状态无效")
+
+    if account is None:
+        redeem_key = _strip_or_none(payload.get("redeem_key"))
+        if final_shop == SELF_SHOP and not redeem_key:
+            redeem_key = _generate_self_redeem_key(db)
+        elif not redeem_key:
+            raise HTTPException(status_code=400, detail="店铺账号必须填写兑换密钥")
+        _ensure_unique_redeem_key(db, redeem_key)
+        payload["redeem_key"] = redeem_key
+
+    if final_shop != SELF_SHOP or final_account_type != "Team":
+        if account is not None and _account_has_children(account.id, db):
+            raise HTTPException(status_code=400, detail="该母号仍有绑定子号，请先解除或迁移子号绑定")
+        payload["team_role"] = None
+        payload["team_parent_id"] = None
+        return payload
+
+    final_team_role = _strip_or_none(
+        payload.get("team_role", account.team_role if account else TEAM_ROLE_PARENT)
+    ) or TEAM_ROLE_PARENT
+    if final_team_role not in {TEAM_ROLE_PARENT, TEAM_ROLE_CHILD}:
+        raise HTTPException(status_code=400, detail="Team 角色无效")
+
+    if account is not None and _account_has_children(account.id, db) and final_team_role != TEAM_ROLE_PARENT:
+        raise HTTPException(status_code=400, detail="该母号仍有绑定子号，请先解除或迁移子号绑定")
+
+    payload["team_role"] = final_team_role
+    if final_team_role == TEAM_ROLE_PARENT:
+        payload["team_parent_id"] = None
+    else:
+        parent_id = payload.get("team_parent_id", account.team_parent_id if account else None)
+        parent_id_changed = True
+        if account is not None:
+            try:
+                parent_id_changed = (
+                    None if parent_id in (None, "") else int(parent_id)
+                ) != account.team_parent_id
+            except (TypeError, ValueError):
+                parent_id_changed = True
+        payload["team_parent_id"] = _validate_team_parent_id(
+            parent_id,
+            db,
+            current_user,
+            effective_role,
+            account.id if account else None,
+            require_edit_permission=(account is None or parent_id_changed),
+        )
+
+    return payload
+
+
 def _serialize_account(account: Account, user: User, effective_role: str, db: Session) -> dict:
     owner_username = None
     if account.created_by is not None:
         owner = db.query(User).filter(User.id == account.created_by).first()
         if owner:
             owner_username = owner.username
+
+    team_parent_label = None
+    if account.team_parent_id:
+        parent = db.query(Account).filter(Account.id == account.team_parent_id).first()
+        if parent:
+            team_parent_label = _account_label(parent)
 
     shares_q = (
         db.query(AccountShare, User)
@@ -134,10 +331,18 @@ def _serialize_account(account: Account, user: User, effective_role: str, db: Se
         "account_type": account.account_type,
         "email": account.email,
         "password": account.password,
+        "recovery_email": account.recovery_email,
+        "mail_auth_code": account.mail_auth_code,
+        "mail_token": account.mail_token,
+        "account_provider": account.account_provider,
+        "login_method": account.login_method,
         "code_url": account.code_url,
         "status": account.status,
         "remark": account.remark,
         "redeemed_at": account.redeemed_at,
+        "team_role": account.team_role,
+        "team_parent_id": account.team_parent_id,
+        "team_parent_label": team_parent_label,
         "created_by": account.created_by,
         "owner_username": owner_username,
         "shared_with": shared_with,
@@ -150,7 +355,6 @@ def _serialize_account(account: Account, user: User, effective_role: str, db: Se
 def _filter_visible_accounts_query(q, user: User, effective_role: str):
     if effective_role == "admin":
         return q
-    from sqlalchemy import select
     shared_sel = select(AccountShare.account_id).where(AccountShare.user_id == user.id)
     return q.filter(or_(Account.created_by == user.id, Account.id.in_(shared_sel)))
 
@@ -365,6 +569,7 @@ def admin_delete_invite_code(
 def list_accounts(
     search: Optional[str] = Query(None),
     account_type: Optional[str] = Query(None),
+    team_role_filter: Optional[str] = Query(None),
     status: Optional[str] = Query(None),
     shop: Optional[str] = Query(None),
     scope: Optional[str] = Query(None),  # "mine" | "shared" | None(all visible)
@@ -381,18 +586,31 @@ def list_accounts(
         pattern = f"%{search}%"
         q = q.filter(
             (Account.email.ilike(pattern))
+            | (Account.recovery_email.ilike(pattern))
             | (Account.redeem_key.ilike(pattern))
             | (Account.remark.ilike(pattern))
         )
     if account_type:
         q = q.filter(Account.account_type == account_type)
+    if team_role_filter:
+        if team_role_filter == "plus":
+            q = q.filter(Account.account_type == "Plus")
+        elif team_role_filter == TEAM_ROLE_PARENT:
+            q = q.filter(Account.account_type == "Team", Account.team_role == TEAM_ROLE_PARENT)
+        elif team_role_filter == TEAM_ROLE_CHILD:
+            q = q.filter(Account.account_type == "Team", Account.team_role == TEAM_ROLE_CHILD)
+        elif team_role_filter == "child_unbound":
+            q = q.filter(
+                Account.account_type == "Team",
+                Account.team_role == TEAM_ROLE_CHILD,
+                Account.team_parent_id.is_(None),
+            )
     if status:
         q = q.filter(Account.status == status)
 
     if scope == "mine":
         q = q.filter(Account.created_by == current_user.id)
     elif scope == "shared":
-        from sqlalchemy import select
         shared_sel = select(AccountShare.account_id).where(AccountShare.user_id == current_user.id)
         q = q.filter(Account.id.in_(shared_sel))
     elif scope == "orphan" and effective_role == "admin":
@@ -402,6 +620,138 @@ def list_accounts(
     return [_serialize_account(a, current_user, effective_role, db) for a in accounts]
 
 
+@app.get("/api/accounts/team-parents", response_model=List[TeamParentCandidate])
+def list_team_parent_candidates(
+    exclude_id: Optional[int] = Query(None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    effective_role: str = Depends(get_effective_role),
+):
+    q = db.query(Account).filter(
+        Account.shop == SELF_SHOP,
+        Account.account_type == "Team",
+        Account.team_role == TEAM_ROLE_PARENT,
+    )
+    if exclude_id is not None:
+        q = q.filter(Account.id != exclude_id)
+    if effective_role != "admin":
+        q = q.filter(Account.created_by == current_user.id)
+
+    rows = q.order_by(Account.email.asc()).all()
+    result = []
+    for account in rows:
+        owner_username = None
+        if account.created_by is not None:
+            owner = db.query(User).filter(User.id == account.created_by).first()
+            owner_username = owner.username if owner else None
+        result.append(
+            TeamParentCandidate(
+                id=account.id,
+                email=account.email,
+                redeem_key=account.redeem_key,
+                owner_username=owner_username,
+                remark=account.remark,
+            )
+        )
+    return result
+
+
+def _parse_self_import_line(raw: str) -> dict:
+    parts = [p.strip() for p in raw.split("----")]
+    if len(parts) == 3:
+        email, password, recovery_email = parts
+        if not email or not password or not recovery_email:
+            raise ValueError("Google 格式的邮箱、密码、辅助邮箱都不能为空")
+        if "@" not in email:
+            raise ValueError("邮箱格式不正确")
+        if "@" not in recovery_email:
+            raise ValueError("辅助邮箱格式不正确")
+        return {
+            "email": email,
+            "password": password,
+            "recovery_email": recovery_email,
+            "mail_auth_code": None,
+            "mail_token": None,
+            "account_provider": PROVIDER_GOOGLE,
+            "login_method": LOGIN_METHOD_GOOGLE_OAUTH,
+        }
+    if len(parts) == 4:
+        email, password, mail_auth_code, mail_token = parts
+        if not email or not password or not mail_auth_code or not mail_token:
+            raise ValueError("Outlook 格式的邮箱、密码、授权码、令牌都不能为空")
+        if "@" not in email:
+            raise ValueError("邮箱格式不正确")
+        return {
+            "email": email,
+            "password": password,
+            "recovery_email": None,
+            "mail_auth_code": mail_auth_code,
+            "mail_token": mail_token,
+            "account_provider": PROVIDER_OUTLOOK,
+            "login_method": LOGIN_METHOD_PASSWORD,
+        }
+    raise ValueError("格式应为：Google 邮箱----密码----辅助邮箱，或 Outlook 邮箱----密码----授权码----令牌")
+
+
+@app.post("/api/accounts/import-self", response_model=SelfImportResponse)
+def import_self_accounts(
+    data: SelfImportRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    effective_role: str = Depends(get_effective_role),
+):
+    accounts = []
+    errors = []
+    seen_emails = set()
+
+    for line_no, raw_line in enumerate(data.raw_text.splitlines(), start=1):
+        raw = raw_line.strip()
+        if not raw:
+            continue
+
+        try:
+            parsed = _parse_self_import_line(raw)
+            email = parsed["email"]
+            email_key = email.lower()
+            if email_key in seen_emails:
+                raise ValueError("本次导入中邮箱重复")
+            seen_emails.add(email_key)
+            if _self_email_exists(db, email):
+                raise ValueError("该自有账号邮箱已存在")
+
+            payload = {
+                "redeem_key": None,
+                "shop": SELF_SHOP,
+                "account_type": data.account_type,
+                "team_role": data.team_role,
+                "team_parent_id": data.team_parent_id,
+                "code_url": None,
+                "status": "available",
+                "remark": "",
+                **parsed,
+            }
+            payload = _normalize_account_payload(payload, db, current_user, effective_role)
+
+            account = Account(**payload, created_by=current_user.id)
+            db.add(account)
+            db.commit()
+            db.refresh(account)
+            accounts.append(_serialize_account(account, current_user, effective_role, db))
+        except HTTPException as exc:
+            db.rollback()
+            errors.append({"line": line_no, "raw": raw, "error": str(exc.detail)})
+        except ValueError as exc:
+            db.rollback()
+            errors.append({"line": line_no, "raw": raw, "error": str(exc)})
+
+    return SelfImportResponse(
+        created=len(accounts),
+        failed=len(errors),
+        accounts=accounts,
+        errors=errors,
+    )
+
+
 @app.post("/api/accounts", response_model=AccountOut)
 def create_account(
     data: AccountCreate,
@@ -409,11 +759,8 @@ def create_account(
     current_user: User = Depends(get_current_user),
     effective_role: str = Depends(get_effective_role),
 ):
-    existing = db.query(Account).filter(Account.redeem_key == data.redeem_key).first()
-    if existing:
-        raise HTTPException(status_code=400, detail="该兑换密钥已存在")
-
     payload = data.model_dump()
+    payload = _normalize_account_payload(payload, db, current_user, effective_role)
     payload["code_url"] = sanitize_url(payload.get("code_url"))
     account = Account(**payload, created_by=current_user.id)
     db.add(account)
@@ -481,6 +828,7 @@ def update_account(
         raise HTTPException(status_code=403, detail="仅拥有者或管理员可编辑该账号")
 
     update_data = data.model_dump(exclude_unset=True)
+    update_data = _normalize_account_payload(update_data, db, current_user, effective_role, account)
     if "code_url" in update_data:
         update_data["code_url"] = sanitize_url(update_data["code_url"])
     for k, v in update_data.items():
@@ -500,6 +848,9 @@ def delete_account(
     account = db.query(Account).filter(Account.id == account_id).first()
     if not account:
         raise HTTPException(status_code=404, detail="账号不存在")
+    db.query(Account).filter(Account.team_parent_id == account_id).update(
+        {Account.team_parent_id: None}, synchronize_session=False
+    )
     db.delete(account)
     db.commit()
     return {"ok": True}
@@ -539,12 +890,29 @@ async def fetch_code(
         raise HTTPException(status_code=404, detail="账号不存在")
     if not _user_can_view_account(account, current_user, effective_role, db):
         raise HTTPException(status_code=404, detail="账号不存在")
-    if not account.code_url:
-        raise HTTPException(status_code=400, detail="该账号没有收码链接")
+    if account.code_url:
+        result = await fetch_verification_code(
+            account.email, account.password, account.code_url
+        )
+        return FetchCodeResponse(**result)
 
-    result = await fetch_verification_code(
-        account.email, account.password, account.code_url
+    is_outlook = account.account_provider == PROVIDER_OUTLOOK or (
+        bool(account.mail_auth_code) and bool(account.mail_token)
     )
+    if not is_outlook:
+        raise HTTPException(status_code=400, detail="该账号没有可用收码方式")
+    if not account.mail_auth_code or not account.mail_token:
+        raise HTTPException(status_code=400, detail="Outlook 账号缺少授权码或令牌")
+
+    result = await fetch_outlook_verification_code(
+        account.email,
+        account.mail_auth_code,
+        account.mail_token,
+    )
+    new_refresh_token = result.pop("new_refresh_token", None)
+    if new_refresh_token and new_refresh_token != account.mail_token:
+        account.mail_token = new_refresh_token
+        db.commit()
     return FetchCodeResponse(**result)
 
 
@@ -691,4 +1059,4 @@ def claim_account(
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run("main:app", host="127.0.0.1", port=25487, reload=True)
+    uvicorn.run("main:app", host="0.0.0.0", port=25487, reload=True)
