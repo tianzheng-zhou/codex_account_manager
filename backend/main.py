@@ -363,26 +363,29 @@ def _filter_visible_accounts_query(q, user: User, effective_role: str):
 
 @app.post("/api/auth/register", response_model=UserOut)
 def register(data: RegisterRequest, db: Session = Depends(get_db)):
-    if len(data.username) < 2:
+    username = data.username.strip()
+    invite_code = data.invite_code.strip() if data.invite_code else None
+
+    if len(username) < 2:
         raise HTTPException(status_code=400, detail="用户名至少 2 个字符")
     if len(data.password) < MIN_PASSWORD_LENGTH:
         raise HTTPException(status_code=400, detail=f"密码至少 {MIN_PASSWORD_LENGTH} 个字符")
 
-    existing = db.query(User).filter(User.username == data.username).first()
+    existing = db.query(User).filter(User.username == username).first()
     if existing:
         raise HTTPException(status_code=400, detail="注册失败，请更换用户名或稍后重试")
 
     is_approved = False
-    if data.invite_code:
+    if invite_code:
         invite = db.query(InviteCode).filter(
-            InviteCode.code == data.invite_code, InviteCode.used_by.is_(None)
+            InviteCode.code == invite_code, InviteCode.used_by.is_(None)
         ).first()
         if not invite:
             raise HTTPException(status_code=400, detail="邀请码无效或已被使用")
         is_approved = True
 
     user = User(
-        username=data.username,
+        username=username,
         password_hash=hash_password(data.password),
         role="user",
         is_approved=is_approved,
@@ -390,7 +393,7 @@ def register(data: RegisterRequest, db: Session = Depends(get_db)):
     db.add(user)
     db.flush()
 
-    if data.invite_code:
+    if invite_code:
         invite.used_by = user.id
         invite.used_at = datetime.now()
 
@@ -401,18 +404,18 @@ def register(data: RegisterRequest, db: Session = Depends(get_db)):
 
 @app.post("/api/auth/login", response_model=TokenResponse)
 def login(data: LoginRequest, request: Request, db: Session = Depends(get_db)):
+    username = data.username.strip()
     ip = _client_ip(request)
-    check_login_rate_limit(data.username, ip)
+    check_login_rate_limit(username, ip)
 
-    user = db.query(User).filter(User.username == data.username).first()
+    user = db.query(User).filter(User.username == username).first()
     if not user or not verify_password(data.password, user.password_hash):
-        record_login_failure(data.username, ip)
+        record_login_failure(username, ip)
         raise HTTPException(status_code=401, detail="用户名或密码错误")
     if not user.is_approved:
-        record_login_failure(data.username, ip)
         raise HTTPException(status_code=403, detail="账号待审核，请联系管理员")
 
-    clear_login_failures(data.username, ip)
+    clear_login_failures(username, ip)
     token = create_access_token({"sub": str(user.id)})
     return TokenResponse(access_token=token)
 
@@ -1059,4 +1062,9 @@ def claim_account(
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run("main:app", host="0.0.0.0", port=25487, reload=True)
+    uvicorn.run(
+        "main:app",
+        host="0.0.0.0",
+        port=25487,
+        reload=os.environ.get("CODEX_RELOAD") == "1",
+    )

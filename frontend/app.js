@@ -7,6 +7,7 @@ let debounceTimer = null;
 let currentView = 'dashboard';
 let currentShop = null;
 let currentUser = null;
+let loginRetryTimer = null;
 
 const SELF_SHOP = 'self';
 const SHOP_VIEW_MAP = {
@@ -46,6 +47,47 @@ function authHeaders() {
   return h;
 }
 
+async function readResponseJson(resp) {
+  try {
+    return await resp.json();
+  } catch {
+    return {};
+  }
+}
+
+function formatRetryAfter(seconds) {
+  const value = Math.max(Number.parseInt(seconds, 10) || 1, 1);
+  if (value >= 60) return `${Math.ceil(value / 60)} 分钟`;
+  return `${value} 秒`;
+}
+
+function startLoginRetryCountdown(btn, msg, seconds, detail) {
+  if (loginRetryTimer) clearInterval(loginRetryTimer);
+  let remaining = Math.max(Number.parseInt(seconds, 10) || 1, 1);
+
+  const render = () => {
+    msg.textContent = `${detail || '登录尝试过多'}（剩余 ${formatRetryAfter(remaining)}）`;
+    msg.className = 'auth-msg error';
+    msg.style.display = 'block';
+    btn.disabled = true;
+    btn.textContent = `请等待 ${formatRetryAfter(remaining)}`;
+  };
+
+  render();
+  loginRetryTimer = setInterval(() => {
+    remaining -= 1;
+    if (remaining <= 0) {
+      clearInterval(loginRetryTimer);
+      loginRetryTimer = null;
+      btn.disabled = false;
+      btn.textContent = '登录';
+      msg.style.display = 'none';
+      return;
+    }
+    render();
+  }, 1000);
+}
+
 async function authFetch(url, opts = {}) {
   opts.headers = { ...authHeaders(), ...(opts.headers || {}) };
   const resp = await fetch(url, opts);
@@ -79,6 +121,7 @@ async function handleLogin(e) {
   const msg = document.getElementById('loginMsg');
   const username = document.getElementById('loginUsername').value.trim();
   const password = document.getElementById('loginPassword').value;
+  let keepDisabled = false;
 
   btn.disabled = true;
   msg.style.display = 'none';
@@ -89,12 +132,18 @@ async function handleLogin(e) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ username, password }),
     });
-    const data = await resp.json();
+    const data = await readResponseJson(resp);
     if (resp.ok) {
       setToken(data.access_token);
       await initApp();
     } else {
-      msg.textContent = data.detail || '登录失败';
+      if (resp.status === 429) {
+        const retryAfter = resp.headers.get('Retry-After') || '60';
+        keepDisabled = true;
+        startLoginRetryCountdown(btn, msg, retryAfter, data.detail);
+        return;
+      }
+      msg.textContent = data.detail || `登录失败（HTTP ${resp.status}）`;
       msg.className = 'auth-msg error';
       msg.style.display = 'block';
     }
@@ -103,7 +152,7 @@ async function handleLogin(e) {
     msg.className = 'auth-msg error';
     msg.style.display = 'block';
   } finally {
-    btn.disabled = false;
+    if (!keepDisabled) btn.disabled = false;
   }
 }
 
@@ -132,7 +181,7 @@ async function handleRegister(e) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ username, password, invite_code }),
     });
-    const data = await resp.json();
+    const data = await readResponseJson(resp);
     if (resp.ok) {
       if (data.is_approved) {
         msg.textContent = '注册成功，请登录';
@@ -143,7 +192,7 @@ async function handleRegister(e) {
       }
       msg.style.display = 'block';
     } else {
-      msg.textContent = data.detail || '注册失败';
+      msg.textContent = data.detail || `注册失败（HTTP ${resp.status}）`;
       msg.className = 'auth-msg error';
       msg.style.display = 'block';
     }
