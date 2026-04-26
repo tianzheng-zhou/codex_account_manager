@@ -29,13 +29,17 @@ async def _check_proxy() -> bool:
 
 
 async def _http_client(**kwargs) -> httpx.AsyncClient:
-    """Return an AsyncClient that uses the proxy when available, otherwise direct."""
+    """Return an AsyncClient that uses the proxy when available, otherwise direct.
+
+    trust_env=False is set on the direct path to prevent httpx from auto-reading
+    SOCKS proxy env vars (e.g. all_proxy) which require the optional socksio package.
+    """
     global _proxy_reachable
     if _proxy_reachable is None:
         _proxy_reachable = await _check_proxy()
     if _proxy_reachable and PROXY_URL:
         return httpx.AsyncClient(proxy=PROXY_URL, **kwargs)
-    return httpx.AsyncClient(**kwargs)
+    return httpx.AsyncClient(trust_env=False, **kwargs)
 
 
 OUTLOOK_TOKEN_URL = "https://login.microsoftonline.com/consumers/oauth2/v2.0/token"
