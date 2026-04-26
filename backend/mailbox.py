@@ -13,6 +13,31 @@ from bs4 import BeautifulSoup
 
 from config import PROXY_URL
 
+_proxy_reachable: bool | None = None
+
+
+async def _check_proxy() -> bool:
+    """Return True if PROXY_URL is configured and reachable."""
+    if not PROXY_URL:
+        return False
+    try:
+        async with httpx.AsyncClient(timeout=3, proxy=PROXY_URL) as c:
+            await c.head("https://login.microsoftonline.com")
+        return True
+    except Exception:
+        return False
+
+
+async def _http_client(**kwargs) -> httpx.AsyncClient:
+    """Return an AsyncClient that uses the proxy when available, otherwise direct."""
+    global _proxy_reachable
+    if _proxy_reachable is None:
+        _proxy_reachable = await _check_proxy()
+    if _proxy_reachable and PROXY_URL:
+        return httpx.AsyncClient(proxy=PROXY_URL, **kwargs)
+    return httpx.AsyncClient(**kwargs)
+
+
 OUTLOOK_TOKEN_URL = "https://login.microsoftonline.com/consumers/oauth2/v2.0/token"
 OUTLOOK_IMAP_HOST = "imap-mail.outlook.com"
 OUTLOOK_IMAP_HOSTS = (OUTLOOK_IMAP_HOST, "outlook.office365.com")
@@ -106,7 +131,7 @@ async def _refresh_outlook_access_token(
     scope: str = OUTLOOK_IMAP_SCOPE,
 ) -> dict:
     try:
-        async with httpx.AsyncClient(timeout=30, proxy=PROXY_URL) as client:
+        async with await _http_client(timeout=30) as client:
             resp = await client.post(
                 OUTLOOK_TOKEN_URL,
                 data={
@@ -341,7 +366,7 @@ def _should_try_graph_fallback(*results: dict) -> bool:
 
 async def _fetch_outlook_code_via_graph(access_token: str) -> dict:
     try:
-        async with httpx.AsyncClient(timeout=30, proxy=PROXY_URL) as client:
+        async with await _http_client(timeout=30) as client:
             resp = await client.get(
                 OUTLOOK_GRAPH_MESSAGES_URL,
                 headers={
@@ -482,7 +507,7 @@ async def fetch_verification_code(
     messages_url = f"{base}/api/messages?limit=10"
 
     try:
-        async with httpx.AsyncClient(timeout=30, follow_redirects=True, proxy=PROXY_URL) as client:
+        async with await _http_client(timeout=30, follow_redirects=True) as client:
             login_resp = await client.post(
                 login_url,
                 json={"address": email, "password": password},
