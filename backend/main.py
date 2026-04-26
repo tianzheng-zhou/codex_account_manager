@@ -43,6 +43,7 @@ from auth import (
     get_effective_role,
     ensure_default_admin,
     sanitize_url,
+    check_auth_ip_rate_limit,
     check_login_rate_limit,
     record_login_failure,
     clear_login_failures,
@@ -362,7 +363,9 @@ def _filter_visible_accounts_query(q, user: User, effective_role: str):
 # ===== Auth Routes =====
 
 @app.post("/api/auth/register", response_model=UserOut)
-def register(data: RegisterRequest, db: Session = Depends(get_db)):
+def register(data: RegisterRequest, request: Request, db: Session = Depends(get_db)):
+    check_auth_ip_rate_limit(_client_ip(request))
+
     username = data.username.strip()
     invite_code = data.invite_code.strip() if data.invite_code else None
 
@@ -406,6 +409,7 @@ def register(data: RegisterRequest, db: Session = Depends(get_db)):
 def login(data: LoginRequest, request: Request, db: Session = Depends(get_db)):
     username = data.username.strip()
     ip = _client_ip(request)
+    check_auth_ip_rate_limit(ip)
     check_login_rate_limit(username, ip)
 
     user = db.query(User).filter(User.username == username).first()

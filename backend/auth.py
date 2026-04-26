@@ -118,7 +118,44 @@ def get_effective_role(
     return current_user.role
 
 
-# ---- Login rate limiting ----
+# ---- IP-based auth rate limiting (login + register) ----
+_auth_ip_buckets: dict[str, list[float]] = {}
+_auth_ip_lock = Lock()
+AUTH_IP_BURST_SECONDS = 1
+AUTH_IP_BURST_MAX = 1
+AUTH_IP_WINDOW_SECONDS = 60
+AUTH_IP_WINDOW_MAX = 30
+
+
+def check_auth_ip_rate_limit(ip: str):
+    """Per-IP rate limit for login & register: ≤1 req/s, ≤30 req/min."""
+    now = time.time()
+    with _auth_ip_lock:
+        timestamps = _auth_ip_buckets.get(ip, [])
+        timestamps = [t for t in timestamps if now - t < AUTH_IP_WINDOW_SECONDS]
+
+        burst = [t for t in timestamps if now - t < AUTH_IP_BURST_SECONDS]
+        if len(burst) >= AUTH_IP_BURST_MAX:
+            raise HTTPException(
+                status_code=429,
+                detail="操作过于频繁，请 1 秒后再试",
+                headers={"Retry-After": "1"},
+            )
+
+        if len(timestamps) >= AUTH_IP_WINDOW_MAX:
+            oldest = timestamps[0]
+            retry_after = max(int(AUTH_IP_WINDOW_SECONDS - (now - oldest)), 1)
+            raise HTTPException(
+                status_code=429,
+                detail=f"请求过多，请 {retry_after} 秒后再试",
+                headers={"Retry-After": str(retry_after)},
+            )
+
+        timestamps.append(now)
+        _auth_ip_buckets[ip] = timestamps
+
+
+# ---- Login failure rate limiting ----
 _login_attempts: dict[str, list[float]] = {}
 _login_lock = Lock()
 LOGIN_WINDOW_SECONDS = 15 * 60
